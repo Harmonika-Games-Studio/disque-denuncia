@@ -30,6 +30,9 @@ func TestDiaEmBrasilia(t *testing.T) {
 	if d := Dia(agora); d != "2026-10-27" {
 		t.Errorf("Dia = %s", d)
 	}
+	if h := Hora(agora); h != 23 {
+		t.Errorf("Hora = %d", h)
+	}
 }
 
 func TestRegistrarEBuscar(t *testing.T) {
@@ -204,5 +207,40 @@ func TestAuthenticate(t *testing.T) {
 		if err != nil || ok != tc.want {
 			t.Errorf("%s/%s: %v %v, esperava %v", tc.user, tc.pass, ok, err, tc.want)
 		}
+	}
+}
+
+func TestPendentesSoDiasCompletos(t *testing.T) {
+	s := newStore(t)
+	ontem := agora.Add(-24 * time.Hour)
+	s.Registrar(Nova{Categoria: "outro", Descricao: texto, Imagens: [][]byte{[]byte("a"), []byte("b")}}, ontem)
+	s.Registrar(Nova{Categoria: "fraude", Descricao: texto}, agora)
+
+	list, err := s.Pendentes(Dia(agora))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].Categoria != "outro" || len(list[0].Anexos) != 2 || list[0].Descricao != texto {
+		t.Fatalf("pendentes: %+v", list)
+	}
+	if err := s.Remover(list[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Anexo(list[0].Anexos[0]); !errors.Is(err, ErrNotFound) {
+		t.Error("o anexo ficou depois de remover")
+	}
+	if rest, _ := s.Pendentes(Dia(agora.Add(24 * time.Hour))); len(rest) != 1 || rest[0].Categoria != "fraude" {
+		t.Errorf("amanhã: %+v", rest)
+	}
+}
+
+func TestPendentesErroDoBanco(t *testing.T) {
+	s := newStore(t)
+	s.db.Close()
+	if _, err := s.Pendentes("2026-10-28"); err == nil {
+		t.Error("Pendentes")
+	}
+	if err := s.Remover("x"); err == nil {
+		t.Error("Remover")
 	}
 }

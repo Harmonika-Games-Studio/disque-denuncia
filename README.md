@@ -6,8 +6,11 @@ SQLite em Go puro, imagem distroless.
 
 - `/`: página pública, sem login. Quem denuncia escolhe o assunto, descreve e, se quiser,
   anexa até 3 imagens.
-- `/admin`: painel da administração, com login (HTTP Basic, tabela `users`). Lista,
-  lê, vê as imagens, muda o status e escreve um parecer interno.
+- **Entrega ao HarmonikaOS**: uma vez por dia, as denúncias dos dias anteriores vão para
+  o HarmonikaOS (Admin › Denúncias), onde a administração trata. Entregue e confirmada,
+  a denúncia é apagada daqui.
+- `/admin`: painel com login (HTTP Basic, tabela `users`). Mostra o que ainda não foi
+  entregue ao OS (ou tudo, se a entrega estiver desligada).
 
 O código é pequeno de propósito: dá para conferir tudo o que está abaixo lendo uns
 poucos arquivos.
@@ -25,6 +28,8 @@ poucos arquivos.
 | Sem log de acesso. | Não há middleware de log. O `ErrorLog` do `http.Server` vai para `io.Discard` (o do Go escreve o IP do cliente quando um handler entra em pânico). O único log é `erro interno` com a mensagem do erro, sem caminho, IP nem conteúdo. |
 | Sem cache e sem `Referer`. | `Cache-Control: no-store` e `Referrer-Policy: no-referrer` em toda resposta. |
 | Apagado é apagado de verdade. | `PRAGMA secure_delete` (o SQLite zera o que é removido). |
+| A entrega ao HarmonikaOS não conta a hora do envio, nem o IP. | `internal/entrega`: sai só o lote dos **dias anteriores**, a partir de `ENTREGA_HORA`; o request parte deste servidor; o JSON leva só id, categoria, descrição, data e quantas imagens. |
+| Depois de entregue, não fica cópia aqui. | `entrega.Tentar` só chama `Remover` depois de o OS confirmar o texto e cada imagem. |
 
 ### A trava automática
 
@@ -49,6 +54,26 @@ regras, mude este README junto: é o que a empresa promete a quem denuncia.
 
 Não há protocolo nem acompanhamento: depois de enviada, ninguém consegue ligar a
 denúncia a quem enviou, nem a própria pessoa.
+
+## Entrega ao HarmonikaOS
+
+A cada 10 minutos, se já passou de `ENTREGA_HORA` (horário de Brasília), o canal entrega
+as denúncias com data **anterior a hoje**:
+
+```
+POST {OS_URL}/api/denuncias/receber                    {"id","categoria","descricao","recebida_em","total_imagens"}
+PUT  {OS_URL}/api/denuncias/receber/{id}/imagens/{n}   o JPEG n, uma imagem por request (limite de 4,5 MB da Vercel)
+```
+
+Os dois levam `Authorization: Bearer {OS_TOKEN}`. No OS, o mesmo valor fica em
+`DENUNCIA_TOKEN` (mínimo de 32 caracteres) e a empresa em `DENUNCIA_EMPRESA_ID`. Os dois
+lados são idempotentes pelo id: se a entrega cair no meio, a denúncia continua aqui e a
+próxima tentativa repete tudo sem duplicar. Só depois de tudo confirmado ela é apagada
+daqui.
+
+Por que só dias completos: entregar às 08:00 a denúncia de hoje contaria que ela chegou
+de madrugada. Saindo só as de ontem para trás, o horário da entrega não diz nada além da
+data, e uma nova tentativa depois de falha pode acontecer a qualquer hora.
 
 ## Conferir em 5 minutos
 
@@ -83,7 +108,9 @@ docker run -d --name disque-denuncia -p 127.0.0.1:8080:8080 -v disque-denuncia-d
 ```
 
 Variáveis: `DB_PATH` (padrão `denuncias.db`), `ADDR` (padrão `127.0.0.1:8080`),
-`EMPRESA` (nome no título da página, padrão `Harmonika`).
+`EMPRESA` (nome no título da página, padrão `Harmonika`), `OS_URL` (base do HarmonikaOS;
+vazio = entrega desligada), `OS_TOKEN` (obrigatório com `OS_URL`), `ENTREGA_HORA`
+(padrão `8`).
 
 Publique **só com HTTPS**: o login do painel é HTTP Basic, e a denúncia não pode
 trafegar aberta.
@@ -95,6 +122,7 @@ main.go                         sobe o servidor (sem log de acesso)
 internal/db/                    abre o SQLite e aplica as migrations embutidas
 internal/store/                 denúncias, anexos, usuários
 internal/imagem/                re-codifica a imagem e apaga os metadados
+internal/entrega/               entrega diária ao HarmonikaOS e remoção local
 internal/web/publico.go         página pública e envio
 internal/web/admin.go           painel (atrás do login)
 internal/web/server.go          rotas, cabeçalhos de segurança, login

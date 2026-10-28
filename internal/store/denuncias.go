@@ -170,3 +170,43 @@ func (s *Store) Atualizar(id, status, parecer string, agora time.Time) error {
 	}
 	return nil
 }
+
+// Pendentes traz as denúncias recebidas ANTES do dia `hoje` (AAAA-MM-DD), com os
+// anexos. Só dias completos saem: entregar a de hoje às 08:00 contaria que ela
+// chegou de madrugada.
+func (s *Store) Pendentes(hoje string) ([]Denuncia, error) {
+	rows, err := s.db.Query(`SELECT id FROM denuncias WHERE recebida_em < ? ORDER BY recebida_em, id`, hoje)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	list := make([]Denuncia, 0, len(ids))
+	for _, id := range ids {
+		d, err := s.Buscar(id)
+		if err != nil {
+			return nil, err
+		}
+		list = append(list, d)
+	}
+	return list, nil
+}
+
+// Remover apaga a denúncia e os anexos (ON DELETE CASCADE). Com secure_delete, o
+// espaço que ela ocupava no arquivo é zerado.
+func (s *Store) Remover(id string) error {
+	_, err := s.db.Exec(`DELETE FROM denuncias WHERE id = ?`, id)
+	return err
+}

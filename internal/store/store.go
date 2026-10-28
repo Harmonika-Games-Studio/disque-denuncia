@@ -35,6 +35,9 @@ var brasilia = time.FixedZone("BRT", -3*60*60)
 // Dia devolve a data (AAAA-MM-DD) em Brasília. É tudo o que se grava do momento do envio.
 func Dia(t time.Time) string { return t.In(brasilia).Format(time.DateOnly) }
 
+// Hora devolve a hora (0 a 23) em Brasília. Serve à entrega diária, nunca à denúncia.
+func Hora(t time.Time) int { return t.In(brasilia).Hour() }
+
 type Store struct{ db *sql.DB }
 
 func New(db *sql.DB) *Store { return &Store{db: db} }
