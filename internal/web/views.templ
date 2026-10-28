@@ -1,0 +1,196 @@
+package web
+
+import (
+	"strconv"
+
+	"disque-denuncia/internal/store"
+)
+
+templ base(title string) {
+	<!DOCTYPE html>
+	<html lang="pt-BR">
+		<head>
+			<meta charset="utf-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1"/>
+			<meta name="referrer" content="no-referrer"/>
+			<title>{ title }</title>
+			<meta name="htmx-config" content={ htmxConfig }/>
+			<script src="/static/htmx.min.js"></script>
+			<style>
+				body { font: 16px/1.5 system-ui, sans-serif; max-width: 44rem; margin: 2rem auto; padding: 0 1rem; color: #222; }
+				nav { display: flex; gap: 1rem; margin-bottom: 1rem; }
+				table { width: 100%; border-collapse: collapse; }
+				td, th { padding: .45rem; border-bottom: 1px solid #ddd; text-align: left; vertical-align: top; }
+				label { display: block; font-weight: 600; margin: 1rem 0 .3rem; }
+				select, textarea, input[type=file] { width: 100%; box-sizing: border-box; padding: .45rem; font: inherit; }
+				textarea { min-height: 12rem; }
+				button { margin-top: 1rem; padding: .55rem 1.2rem; font: inherit; cursor: pointer; }
+				button:disabled { opacity: .5; cursor: wait; }
+				#flash:empty { display: none; }
+				#flash { padding: .6rem; background: #fdecea; border-left: 3px solid #c0392b; }
+				.garantias { background: #f4f7f4; border-left: 3px solid #4a8f3c; padding: .8rem 1rem; }
+				.garantias li { margin: .25rem 0; }
+				.ok { background: #f4f7f4; border-left: 3px solid #4a8f3c; padding: 1rem; }
+				.descricao { white-space: pre-wrap; background: #f6f6f6; padding: .8rem; }
+				.anexos img { max-width: 100%; margin: .5rem 0; border: 1px solid #ddd; }
+				small, .muted { color: #666; }
+			</style>
+		</head>
+		<body>
+			{ children... }
+		</body>
+	</html>
+}
+
+templ Flash(msg string) {
+	{ msg }
+}
+
+// --- página pública ---
+
+templ FormularioPage(empresa string) {
+	@base("Canal de denúncia · " + empresa) {
+		<h1>Canal de denúncia · { empresa }</h1>
+		<div class="garantias">
+			<strong>Este canal é anônimo.</strong>
+			<ul>
+				<li>Não pedimos nome, e-mail nem login.</li>
+				<li>O sistema não guarda IP, navegador, cookie nem a hora do envio: só a data.</li>
+				<li>Das fotos, só ficam os pixels. Modelo do celular, localização e data da foto são apagados.</li>
+				<li>Só a administração da empresa lê as denúncias.</li>
+			</ul>
+			<small>
+				Para ficar ainda mais seguro: envie do seu celular pessoal, fora do Wi-Fi da empresa, e não
+				escreva detalhes que só você saberia. Não há protocolo nem acompanhamento: depois de enviada,
+				ninguém consegue ligar a denúncia a você, nem você.
+			</small>
+		</div>
+		<div id="canal">
+			<p id="flash" role="alert"></p>
+			<form
+				action="/denuncias"
+				method="post"
+				enctype="multipart/form-data"
+				hx-post="/denuncias"
+				hx-encoding="multipart/form-data"
+				hx-target="#canal"
+				hx-disabled-elt="find button"
+			>
+				<label for="categoria">Assunto</label>
+				<select id="categoria" name="categoria" required>
+					<option value="">Escolha…</option>
+					for _, c := range store.Categorias {
+						<option value={ c.Valor }>{ c.Rotulo }</option>
+					}
+				</select>
+				<label for="descricao">O que aconteceu?</label>
+				<textarea
+					id="descricao"
+					name="descricao"
+					required
+					minlength={ strconv.Itoa(store.DescricaoMin) }
+					maxlength={ strconv.Itoa(store.DescricaoMax) }
+					placeholder="Conte o que aconteceu, onde e quando, e quem estava envolvido."
+				></textarea>
+				<label for="imagens">Imagens (opcional, até { strconv.Itoa(store.MaxImagens) }, JPG, PNG ou WebP de até 8 MB)</label>
+				<input id="imagens" type="file" name="imagens" multiple accept="image/jpeg,image/png,image/webp"/>
+				<button type="submit">Enviar denúncia</button>
+			</form>
+		</div>
+	}
+}
+
+templ Recebida() {
+	<div class="ok" role="status">
+		<strong>Denúncia recebida.</strong>
+		<p>Obrigado. A administração vai analisar. Não guardamos nada que ligue esta denúncia a você.</p>
+		<p><a href="/">Enviar outra</a></p>
+	</div>
+}
+
+// RecebidaPage é a resposta para quem enviou sem JavaScript (o formulário comum).
+templ RecebidaPage(empresa string) {
+	@base("Canal de denúncia · " + empresa) {
+		<h1>Canal de denúncia · { empresa }</h1>
+		@Recebida()
+	}
+}
+
+// --- painel do admin ---
+
+templ admin(title string) {
+	@base(title + " · Denúncias") {
+		<nav>
+			<a href="/admin">Denúncias</a>
+			<a href="/" target="_blank">Página pública</a>
+		</nav>
+		<p id="flash" role="status"></p>
+		{ children... }
+	}
+}
+
+templ PainelPage(list []store.Denuncia, status string) {
+	@admin("Painel") {
+		<h1>Denúncias</h1>
+		<label for="status">Status</label>
+		<select id="status" name="status" hx-get="/admin" hx-target="#lista" hx-trigger="change">
+			<option value="" selected?={ status == "" }>Todas</option>
+			for _, o := range store.Status {
+				<option value={ o.Valor } selected?={ status == o.Valor }>{ o.Rotulo }</option>
+			}
+		</select>
+		<div id="lista">
+			@Lista(list)
+		</div>
+	}
+}
+
+templ Lista(list []store.Denuncia) {
+	if len(list) == 0 {
+		<p class="muted">Nenhuma denúncia.</p>
+	} else {
+		<table>
+			<thead><tr><th>Data</th><th>Assunto</th><th>Status</th><th>Imagens</th><th></th></tr></thead>
+			<tbody>
+				for _, d := range list {
+					<tr>
+						<td>{ dataBR(d.RecebidaEm) }</td>
+						<td>{ rotuloCategoria(d.Categoria) }</td>
+						<td>{ rotuloStatus(d.Status) }</td>
+						<td>{ strconv.Itoa(len(d.Anexos)) }</td>
+						<td><a href={ templ.SafeURL("/admin/denuncias/" + d.ID) }>Abrir</a></td>
+					</tr>
+				}
+			</tbody>
+		</table>
+	}
+}
+
+templ DetalhePage(d store.Denuncia) {
+	@admin(rotuloCategoria(d.Categoria)) {
+		<h1>{ rotuloCategoria(d.Categoria) }</h1>
+		<p class="muted">Recebida em { dataBR(d.RecebidaEm) } (só a data é guardada)</p>
+		<div class="descricao">{ d.Descricao }</div>
+		if len(d.Anexos) > 0 {
+			<div class="anexos">
+				for _, a := range d.Anexos {
+					<a href={ templ.SafeURL("/admin/anexos/" + a) } target="_blank"><img src={ "/admin/anexos/" + a } alt="Imagem da denúncia"/></a>
+				}
+			</div>
+		}
+		<form hx-put={ "/admin/denuncias/" + d.ID } hx-target="#flash">
+			<label for="status">Status</label>
+			<select id="status" name="status">
+				for _, o := range store.Status {
+					<option value={ o.Valor } selected?={ d.Status == o.Valor }>{ o.Rotulo }</option>
+				}
+			</select>
+			<label for="parecer">Parecer (interno)</label>
+			<textarea id="parecer" name="parecer" maxlength={ strconv.Itoa(store.ParecerMax) }>{ d.Parecer }</textarea>
+			if d.AtualizadaEm != "" {
+				<small>Alterada pela administração em { d.AtualizadaEm }</small>
+			}
+			<div><button type="submit">Salvar</button></div>
+		</form>
+	}
+}
