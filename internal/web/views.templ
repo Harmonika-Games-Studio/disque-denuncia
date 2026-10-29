@@ -84,7 +84,7 @@ templ FormularioPage(cfg Config) {
 					minlength={ strconv.Itoa(store.DescricaoMin) }
 					maxlength={ strconv.Itoa(store.DescricaoMax) }
 				></textarea>
-				<label for="arquivos">Arquivos (opcional): fotos, prints, documentos, vídeos ou áudios, até { store.RotuloTamanho(store.MaxTotal) } no total</label>
+				<label for="arquivos">Arquivos: </label>
 				<input id="arquivos" type="file" name="arquivos" multiple/>
 				<div id="progresso" hidden>
 					<progress max="100" value="0"></progress>
@@ -117,7 +117,7 @@ templ Garantias(cfg Config) {
 				if cfg.EntregaHora >= 0 {
 					<li>
 						Todo dia, a partir das { strconv.Itoa(cfg.EntregaHora) }h, as denúncias dos dias anteriores são enviadas ao sistema
-						interno da empresa, só com a data, e apagadas daqui. Lá, só a administração lê.
+						interno da empresa, só com a data, e apagadas daqui.
 					</li>
 				} else {
 					<li>As denúncias ficam guardadas aqui, e só a administração lê.</li>
@@ -140,7 +140,7 @@ templ Garantias(cfg Config) {
 templ Recebida() {
 	<div class="ok" role="status">
 		<strong>Denúncia recebida.</strong>
-		<p>Obrigado. A administração vai analisar. Não guardamos nada que ligue esta denúncia a você.</p>
+		<p>Obrigado. A administração vai analisar.</p>
 		<p><a href="/">Enviar outra</a></p>
 	</div>
 }
