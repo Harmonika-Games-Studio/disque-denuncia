@@ -53,7 +53,9 @@ func TestColunasNaoIdentificamQuemEnviou(t *testing.T) {
 	conn, _ := open(t)
 	for tabela, esperadas := range map[string][]string{
 		"denuncias": {"id", "categoria", "descricao", "recebida_em", "status", "parecer", "atualizada_em"},
-		"anexos":    {"id", "denuncia_id", "posicao", "jpeg"},
+		"envios":    {"id", "criado_dia"},
+		"arquivos":  {"id", "envio_id", "denuncia_id", "posicao", "tamanho", "extensao", "tipo", "limpo"},
+		"partes":    {"arquivo_id", "n", "dados"},
 	} {
 		if got := colunas(t, conn, tabela); !slices.Equal(got, esperadas) {
 			t.Errorf("%s: colunas %v, esperava %v", tabela, got, esperadas)
@@ -64,7 +66,7 @@ func TestColunasNaoIdentificamQuemEnviou(t *testing.T) {
 // Sem rowid, o SQLite não guarda a ordem em que as linhas chegaram.
 func TestTabelasSemRowid(t *testing.T) {
 	conn, _ := open(t)
-	for _, tabela := range []string{"denuncias", "anexos"} {
+	for _, tabela := range []string{"denuncias", "envios", "arquivos", "partes"} {
 		if _, err := conn.Exec(`SELECT rowid FROM ` + tabela); err == nil {
 			t.Errorf("%s tem rowid", tabela)
 		}
@@ -81,15 +83,53 @@ func TestPragmas(t *testing.T) {
 	}
 }
 
-func TestApagarDenunciaLevaAnexos(t *testing.T) {
+func TestApagarDenunciaLevaArquivosEPartes(t *testing.T) {
 	conn, _ := open(t)
 	mustExec(t, conn, `INSERT INTO denuncias (id, categoria, descricao, recebida_em) VALUES ('d1', 'outro', 'x', '2026-10-28')`)
-	mustExec(t, conn, `INSERT INTO anexos (id, denuncia_id, posicao, jpeg) VALUES ('a1', 'd1', 0, x'ff')`)
+	mustExec(t, conn, `INSERT INTO arquivos (id, denuncia_id, posicao, tamanho) VALUES ('a1', 'd1', 0, 1)`)
+	mustExec(t, conn, `INSERT INTO partes (arquivo_id, n, dados) VALUES ('a1', 0, x'ff')`)
 	mustExec(t, conn, `DELETE FROM denuncias WHERE id = 'd1'`)
 	var n int
-	conn.QueryRow(`SELECT COUNT(*) FROM anexos`).Scan(&n)
+	conn.QueryRow(`SELECT (SELECT COUNT(*) FROM arquivos) + (SELECT COUNT(*) FROM partes)`).Scan(&n)
 	if n != 0 {
-		t.Errorf("sobraram %d anexos", n)
+		t.Errorf("sobraram %d linhas", n)
+	}
+}
+
+// A 003 converte o anexo antigo (um JPEG por linha) em arquivo de uma parte só. É o
+// caso do banco que já está no ar: ele recebeu a 001 e a 002 antes da 003 existir.
+func TestMigration003ConverteAnexosAntigos(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "t.db")
+	conn, err := sql.Open("sqlite", "file:"+path+"?_pragma=foreign_keys(1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, conn, `CREATE TABLE schema_migrations (name TEXT PRIMARY KEY)`)
+	for _, nome := range []string{"migrations/001_denuncias.sql", "migrations/002_users.sql"} {
+		if err := apply(conn, nome); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustExec(t, conn, `INSERT INTO denuncias (id, categoria, descricao, recebida_em) VALUES ('d1', 'outro', 'x', '2026-10-28')`)
+	mustExec(t, conn, `INSERT INTO anexos (id, denuncia_id, posicao, jpeg) VALUES ('a1', 'd1', 0, x'ffd8ff01')`)
+	conn.Close()
+
+	conn, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	var tamanho int
+	var tipo, ext string
+	var limpo bool
+	var dados []byte
+	err = conn.QueryRow(`SELECT a.tamanho, a.tipo, a.extensao, a.limpo, p.dados FROM arquivos a JOIN partes p ON p.arquivo_id = a.id
+		WHERE a.id = 'a1' AND a.denuncia_id = 'd1' AND p.n = 0`).Scan(&tamanho, &tipo, &ext, &limpo, &dados)
+	if err != nil || tamanho != 4 || tipo != "image/jpeg" || ext != "jpg" || !limpo || len(dados) != 4 {
+		t.Errorf("convertido: %d %q %q %x %v", tamanho, tipo, ext, dados, err)
+	}
+	if _, err := conn.Exec(`SELECT 1 FROM anexos`); err == nil {
+		t.Error("a tabela anexos devia ter saído")
 	}
 }
 

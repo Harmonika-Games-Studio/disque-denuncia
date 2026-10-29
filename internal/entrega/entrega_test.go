@@ -1,6 +1,7 @@
 package entrega
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -22,34 +23,59 @@ var agora = time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
 
 const texto = "Uma descrição com mais de vinte caracteres."
 
-// osFalso guarda o que chegou e pode recusar o n-ésimo request.
+var ontem = agora.Add(-24 * time.Hour)
+
+// osFalso faz o papel do HarmonikaOS e do Storage: a rota de anexo devolve uma URL
+// de upload que aponta para o próprio servidor de teste.
 type osFalso struct {
 	mu        sync.Mutex
+	url       string
 	pedidos   []string
+	auth      map[string]string
 	denuncias []denunciaJSON
-	imagens   map[string]string
-	recusar   int // 1 = recusa o primeiro request; 0 = aceita tudo
-	auth      []string
+	subidos   map[string][]byte
+	tipos     map[string]string // Content-Type de cada PUT no Storage
+	existe    map[int]bool      // anexos que o OS já tem
+	recusar   string            // prefixo de "MÉTODO caminho" a recusar com 503
+	resposta  string            // corpo forçado para a rota de anexo
 }
 
 func (o *osFalso) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	o.pedidos = append(o.pedidos, r.Method+" "+r.URL.Path)
-	o.auth = append(o.auth, r.Header.Get("Authorization"))
-	if o.recusar == len(o.pedidos) {
+	pedido := r.Method + " " + r.URL.Path
+	o.pedidos = append(o.pedidos, pedido)
+	o.auth[pedido] = r.Header.Get("Authorization")
+	if o.recusar != "" && strings.HasPrefix(pedido, o.recusar) {
 		http.Error(w, "fora do ar", http.StatusServiceUnavailable)
 		return
 	}
 	corpo, _ := io.ReadAll(r.Body)
-	if r.Method == "POST" {
+	switch {
+	case pedido == "POST /api/denuncias/receber":
 		var d denunciaJSON
 		json.Unmarshal(corpo, &d)
 		o.denuncias = append(o.denuncias, d)
-	} else {
-		o.imagens[r.URL.Path] = r.Header.Get("Content-Type") + ":" + string(corpo)
+	case strings.HasPrefix(pedido, "POST /api/denuncias/receber/"):
+		o.responderAnexo(w, r)
+	case r.Method == "PUT" && strings.HasPrefix(r.URL.Path, "/storage/"):
+		o.subidos[r.URL.Path] = corpo
+		o.tipos[r.URL.Path] = r.Header.Get("Content-Type")
 	}
-	w.WriteHeader(http.StatusOK)
+}
+
+func (o *osFalso) responderAnexo(w http.ResponseWriter, r *http.Request) {
+	if o.resposta != "" {
+		io.WriteString(w, o.resposta)
+		return
+	}
+	partes := strings.Split(r.URL.Path, "/")
+	n := partes[len(partes)-1]
+	if o.existe[int(n[0]-'0')] {
+		io.WriteString(w, `{"existe":true}`)
+		return
+	}
+	json.NewEncoder(w).Encode(destinoJSON{URL: o.url + "/storage/" + partes[4] + "/" + n + "?token=assinado"})
 }
 
 func montar(t *testing.T) (*store.Store, *osFalso, *Entregador) {
@@ -60,17 +86,26 @@ func montar(t *testing.T) (*store.Store, *osFalso, *Entregador) {
 	}
 	t.Cleanup(func() { conn.Close() })
 	st := store.New(conn)
-	o := &osFalso{imagens: map[string]string{}}
+	o := &osFalso{auth: map[string]string{}, subidos: map[string][]byte{}, tipos: map[string]string{}, existe: map[int]bool{}}
 	srv := httptest.NewServer(o)
 	t.Cleanup(srv.Close)
+	o.url = srv.URL
 	e := &Entregador{Fila: st, URL: srv.URL + "/", Token: "segredo", HoraEntrega: 8, Client: srv.Client(), Agora: func() time.Time { return agora }}
 	return st, o, e
 }
 
+func registrar(t *testing.T, st *store.Store, quando time.Time, anexos ...store.ArquivoPronto) {
+	t.Helper()
+	if err := st.Registrar(store.Nova{Categoria: "fraude", Descricao: texto}, anexos, quando); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestEntregaDiasCompletosEApaga(t *testing.T) {
 	st, o, e := montar(t)
-	st.Registrar(store.Nova{Categoria: "fraude", Descricao: texto, Imagens: [][]byte{[]byte("jpg0"), []byte("jpg1")}}, agora.Add(-24*time.Hour))
-	st.Registrar(store.Nova{Categoria: "outro", Descricao: texto}, agora) // hoje: fica para amanhã
+	grande := bytes.Repeat([]byte("v"), store.TamParte+100) // duas partes no SQLite
+	registrar(t, st, ontem, store.ArquivoPronto{Dados: []byte("%PDF-1.4 x"), Extensao: "pdf"}, store.ArquivoPronto{Dados: grande, Extensao: "mp4"})
+	registrar(t, st, agora) // hoje: fica para amanhã
 
 	n, err := e.Tentar(context.Background())
 	if err != nil || n != 1 {
@@ -80,39 +115,64 @@ func TestEntregaDiasCompletosEApaga(t *testing.T) {
 		t.Fatalf("chegaram %d denúncias", len(o.denuncias))
 	}
 	d := o.denuncias[0]
-	if d.Categoria != "fraude" || d.Descricao != texto || d.RecebidaEm != "2026-10-27" || d.TotalImagens != 2 || len(d.ID) != 36 {
+	if d.Categoria != "fraude" || d.Descricao != texto || d.RecebidaEm != "2026-10-27" || len(d.ID) != 36 {
 		t.Errorf("payload: %+v", d)
 	}
-	for i, conteudo := range []string{"jpg0", "jpg1"} {
-		caminho := "/api/denuncias/receber/" + d.ID + "/imagens/" + string(rune('0'+i))
-		if o.imagens[caminho] != "image/jpeg:"+conteudo {
-			t.Errorf("imagem %d: %q", i, o.imagens[caminho])
-		}
+	if len(d.Anexos) != 2 || d.Anexos[0] != (anexoJSON{"application/pdf", 10, "pdf", false}) || d.Anexos[1].Tamanho != int64(len(grande)) {
+		t.Errorf("anexos: %+v", d.Anexos)
 	}
-	for _, a := range o.auth {
-		if a != "Bearer segredo" {
-			t.Errorf("Authorization: %q", a)
+	if !bytes.Equal(o.subidos["/storage/"+d.ID+"/0"], []byte("%PDF-1.4 x")) || !bytes.Equal(o.subidos["/storage/"+d.ID+"/1"], grande) {
+		t.Errorf("conteúdo que subiu: %d arquivos", len(o.subidos))
+	}
+	if o.tipos["/storage/"+d.ID+"/0"] != "application/octet-stream" {
+		t.Errorf("o PDF subiu como %q", o.tipos["/storage/"+d.ID+"/0"])
+	}
+	for pedido, a := range o.auth {
+		quer := "Bearer segredo"
+		if strings.HasPrefix(pedido, "PUT /storage/") {
+			quer = "" // o Storage é autorizado pela URL assinada, não pelo token do canal
+		}
+		if a != quer {
+			t.Errorf("%s: Authorization %q", pedido, a)
 		}
 	}
 	rest, _ := st.Listar("")
-	if len(rest) != 1 || rest[0].Categoria != "outro" {
+	if len(rest) != 1 || rest[0].RecebidaEm != "2026-10-28" {
 		t.Errorf("no SQLite ficou: %+v", rest)
 	}
 }
 
 // O JSON entregue só tem os campos da denúncia: nada de quem enviou.
 func TestPayloadSoComCamposDaDenuncia(t *testing.T) {
-	b, _ := json.Marshal(denunciaJSON{})
 	var campos map[string]any
+	b, _ := json.Marshal(denunciaJSON{})
 	json.Unmarshal(b, &campos)
 	if len(campos) != 5 {
 		t.Errorf("campos: %v", campos)
+	}
+	b, _ = json.Marshal(anexoJSON{})
+	campos = nil
+	json.Unmarshal(b, &campos)
+	if len(campos) != 4 {
+		t.Errorf("campos do anexo: %v", campos)
+	}
+}
+
+func TestAnexoQueOOSJaTemNaoSobeDeNovo(t *testing.T) {
+	st, o, e := montar(t)
+	registrar(t, st, ontem, store.ArquivoPronto{Dados: []byte("a")}, store.ArquivoPronto{Dados: []byte("b")})
+	o.existe[0] = true
+	if n, err := e.Tentar(context.Background()); n != 1 || err != nil {
+		t.Fatalf("%d %v", n, err)
+	}
+	if len(o.subidos) != 1 {
+		t.Errorf("subiu %d, esperava só o anexo 1", len(o.subidos))
 	}
 }
 
 func TestAntesDaHoraNaoEntrega(t *testing.T) {
 	st, o, e := montar(t)
-	st.Registrar(store.Nova{Categoria: "outro", Descricao: texto}, agora.Add(-24*time.Hour))
+	registrar(t, st, ontem)
 	e.Agora = func() time.Time { return time.Date(2026, 10, 28, 10, 59, 0, 0, time.UTC) } // 07:59 BRT
 	if n, err := e.Tentar(context.Background()); n != 0 || err != nil || len(o.pedidos) != 0 {
 		t.Errorf("entregou antes da hora: %d %v %v", n, err, o.pedidos)
@@ -120,20 +180,22 @@ func TestAntesDaHoraNaoEntrega(t *testing.T) {
 }
 
 func TestFalhaMantemNoSQLiteERepete(t *testing.T) {
-	for _, recusar := range []int{1, 2} { // 1: recusa o POST; 2: recusa a imagem
+	for _, recusar := range []string{"POST /api/denuncias/receber", "POST /api/denuncias/receber/", "PUT /storage/"} {
 		st, o, e := montar(t)
-		st.Registrar(store.Nova{Categoria: "outro", Descricao: texto, Imagens: [][]byte{[]byte("x")}}, agora.Add(-24*time.Hour))
+		registrar(t, st, ontem, store.ArquivoPronto{Dados: []byte("x")})
 		o.recusar = recusar
 
 		n, err := e.Tentar(context.Background())
 		if n != 0 || err == nil || !strings.Contains(err.Error(), "HTTP 503") || !strings.Contains(err.Error(), "fora do ar") {
-			t.Fatalf("recusar %d: %d %v", recusar, n, err)
+			t.Fatalf("recusar %q: %d %v", recusar, n, err)
+		}
+		if strings.Contains(err.Error(), "token=") {
+			t.Errorf("o erro vazou o token da URL assinada: %v", err)
 		}
 		if rest, _ := st.Listar(""); len(rest) != 1 {
-			t.Fatalf("apagou sem confirmação (recusar %d)", recusar)
+			t.Fatalf("apagou sem confirmação (recusar %q)", recusar)
 		}
-
-		o.recusar = 0
+		o.recusar = ""
 		if n, err := e.Tentar(context.Background()); n != 1 || err != nil {
 			t.Fatalf("segunda tentativa: %d %v", n, err)
 		}
@@ -143,9 +205,24 @@ func TestFalhaMantemNoSQLiteERepete(t *testing.T) {
 	}
 }
 
+func TestRespostaDoAnexoInvalida(t *testing.T) {
+	for resposta, quer := range map[string]string{"não é json": "ilegível", `{}`: "para onde subir"} {
+		st, o, e := montar(t)
+		registrar(t, st, ontem, store.ArquivoPronto{Dados: []byte("x")})
+		o.resposta = resposta
+		if _, err := e.Tentar(context.Background()); err == nil || !strings.Contains(err.Error(), quer) {
+			t.Errorf("%q: %v", resposta, err)
+		}
+		o.resposta = `{"url":"://quebrada"}`
+		if _, err := e.Tentar(context.Background()); err == nil {
+			t.Error("URL quebrada devia dar erro")
+		}
+	}
+}
+
 func TestErroDeRede(t *testing.T) {
 	st, _, e := montar(t)
-	st.Registrar(store.Nova{Categoria: "outro", Descricao: texto}, agora.Add(-24*time.Hour))
+	registrar(t, st, ontem)
 	e.URL = "http://127.0.0.1:1"
 	if _, err := e.Tentar(context.Background()); err == nil {
 		t.Error("esperava erro de rede")
@@ -157,33 +234,39 @@ func TestErroDeRede(t *testing.T) {
 }
 
 type filaQuebrada struct {
-	pendentes, anexo, remover error
+	pendentes, ler, remover error
 }
 
 func (f filaQuebrada) Pendentes(string) ([]store.Denuncia, error) {
-	return []store.Denuncia{{ID: "x", Anexos: []string{"a"}}}, f.pendentes
+	return []store.Denuncia{{ID: "x", Anexos: []store.Arquivo{{ID: "a", Tamanho: 1}}}}, f.pendentes
 }
-func (f filaQuebrada) Anexo(string) ([]byte, error) { return []byte("j"), f.anexo }
-func (f filaQuebrada) Remover(string) error         { return f.remover }
+func (f filaQuebrada) LerArquivo(_ string, w io.Writer) error {
+	if f.ler != nil {
+		return f.ler
+	}
+	_, err := w.Write([]byte("j"))
+	return err
+}
+func (f filaQuebrada) Remover(string) error { return f.remover }
 
 func TestErrosDaFila(t *testing.T) {
 	_, _, e := montar(t)
 	falha := errors.New("disco")
 	for nome, f := range map[string]filaQuebrada{
 		"pendentes": {pendentes: falha},
-		"anexo":     {anexo: falha},
+		"ler":       {ler: falha},
 		"remover":   {remover: falha},
 	} {
 		e.Fila = f
-		if _, err := e.Tentar(context.Background()); !errors.Is(err, falha) {
-			t.Errorf("%s: %v", nome, err)
+		if _, err := e.Tentar(context.Background()); err == nil {
+			t.Errorf("%s: esperava erro", nome)
 		}
 	}
 }
 
 func TestRunParaComOContexto(t *testing.T) {
 	st, o, e := montar(t)
-	st.Registrar(store.Nova{Categoria: "outro", Descricao: texto}, agora.Add(-24*time.Hour))
+	registrar(t, st, ontem)
 	ctx, cancel := context.WithCancel(context.Background())
 	feito := make(chan struct{})
 	go func() { e.Run(ctx, time.Millisecond); close(feito) }()
@@ -219,5 +302,30 @@ func TestUUID(t *testing.T) {
 	}
 	if uuid("curto") != "curto" {
 		t.Error("curto")
+	}
+}
+
+func TestSoAFotoLimpaSobeComoImagem(t *testing.T) {
+	for tipo, quer := range map[string]string{"image/jpeg": "image/jpeg", "image/gif": "application/octet-stream",
+		"text/html; charset=utf-8": "application/octet-stream", "application/pdf": "application/octet-stream"} {
+		if got := tipoNoStorage(tipo); got != quer {
+			t.Errorf("%s → %s", tipo, got)
+		}
+	}
+}
+
+func TestLimpoChegaAoOS(t *testing.T) {
+	st, o, e := montar(t)
+	registrar(t, st, ontem, store.ArquivoPronto{Dados: []byte("%PDF-1.4 x"), Extensao: "pdf"}, store.ArquivoPronto{Dados: []byte("bin")})
+	list, _ := st.Listar("")
+	d, _ := st.Buscar(list[0].ID)
+	if err := st.Remendar(d.Anexos[0].ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.Tentar(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if a := o.denuncias[0].Anexos; !a[0].Limpo || a[1].Limpo {
+		t.Errorf("anexos: %+v", a)
 	}
 }

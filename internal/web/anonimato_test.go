@@ -32,6 +32,14 @@ var proibidos = map[string]string{
 	"googleapis":       "recurso de terceiro (entrega o IP a outro servidor)",
 	"analytics":        "rastreamento",
 	".Filename":        "nome do arquivo enviado (pode ter o nome da pessoa)",
+	// No navegador (canal.js): nada guardado, nada lido do aparelho.
+	"document.cookie": "cookie (rastreia quem volta)",
+	"localStorage":    "guarda dado no navegador da pessoa",
+	"sessionStorage":  "guarda dado no navegador da pessoa",
+	"indexedDB":       "guarda dado no navegador da pessoa",
+	"navigator.":      "lê dado do aparelho (modelo, idioma, localização)",
+	"eval(":           "executa código montado em tempo de execução",
+	"new Function":    "executa código montado em tempo de execução",
 }
 
 // O único cabeçalho que o código lê é o HX-Request (página inteira ou pedaço).
@@ -48,12 +56,13 @@ func fontes(t *testing.T) map[string]string {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() && (d.Name() == ".git" || d.Name() == "static") {
+		if d.IsDir() && d.Name() == ".git" {
 			return filepath.SkipDir
 		}
 		nome := d.Name()
-		fonte := strings.HasSuffix(nome, ".go") || strings.HasSuffix(nome, ".templ")
-		if d.IsDir() || !fonte || strings.HasSuffix(nome, "_test.go") || strings.HasSuffix(nome, "_templ.go") {
+		fonte := strings.HasSuffix(nome, ".go") || strings.HasSuffix(nome, ".templ") || strings.HasSuffix(nome, ".js")
+		// htmx.min.js é a biblioteca de terceiros, conferida pelo hash no README.
+		if d.IsDir() || !fonte || nome == "htmx.min.js" || strings.HasSuffix(nome, "_test.go") || strings.HasSuffix(nome, "_templ.go") {
 			return nil
 		}
 		b, err := os.ReadFile(p)
@@ -68,7 +77,10 @@ func fontes(t *testing.T) map[string]string {
 
 func TestFonteNaoIdentificaQuemDenuncia(t *testing.T) {
 	arquivos := fontes(t)
-	if len(arquivos) < 8 {
+	if _, ok := arquivos[must(filepath.Abs("static/canal.js"))]; !ok {
+		t.Fatal("o canal.js não está sendo conferido")
+	}
+	if len(arquivos) < 10 {
 		t.Fatalf("achou só %d arquivos de fonte", len(arquivos))
 	}
 	for p, src := range arquivos {
@@ -83,6 +95,13 @@ func TestFonteNaoIdentificaQuemDenuncia(t *testing.T) {
 			}
 		}
 	}
+}
+
+func must(s string, err error) string {
+	if err != nil {
+		panic(err)
+	}
+	return s
 }
 
 // O próprio teste precisa enxergar uma violação, senão ele passa por não olhar nada.

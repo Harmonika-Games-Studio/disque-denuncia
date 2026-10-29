@@ -9,13 +9,14 @@
 //
 // O request sai deste servidor: o IP de quem denunciou nunca chega ao OS.
 //
-// Protocolo (cada request cabe no limite de 4,5 MB da Vercel):
+// Protocolo (o corpo de uma rota da Vercel não passa de 4,5 MB, e um anexo vai a 5 GB):
 //
-//	POST {URL}/api/denuncias/receber                   JSON da denúncia, sem imagens
-//	PUT  {URL}/api/denuncias/receber/{id}/imagens/{n}  o JPEG n (0, 1, 2)
+//	POST {URL}/api/denuncias/receber                  JSON da denúncia e a lista dos anexos (tipo, tamanho, extensão, limpo)
+//	POST {URL}/api/denuncias/receber/{id}/anexos/{n}  → {"existe":true} ou {"url": URL assinada de upload}
+//	PUT  {url assinada}                               o anexo n, direto no Storage do Supabase
 //
-// Os dois são idempotentes no OS (o id é o desta denúncia): se a entrega cair no
-// meio, a próxima repete tudo sem duplicar.
+// Tudo é idempotente no OS (o id é o desta denúncia, e o anexo que já subiu é
+// pulado): se a entrega cair no meio, a próxima repete sem duplicar.
 package entrega
 
 import (
@@ -35,7 +36,7 @@ import (
 // fila é o que a entrega precisa do store.
 type fila interface {
 	Pendentes(hoje string) ([]store.Denuncia, error)
-	Anexo(id string) ([]byte, error)
+	LerArquivo(id string, w io.Writer) error
 	Remover(id string) error
 }
 
@@ -88,53 +89,113 @@ func (e *Entregador) Tentar(ctx context.Context) (int, error) {
 	return len(pendentes), nil
 }
 
+type anexoJSON struct {
+	Tipo     string `json:"tipo"`
+	Tamanho  int64  `json:"tamanho"`
+	Extensao string `json:"extensao"`
+	Limpo    bool   `json:"limpo"` // os metadados foram tirados aqui
+}
+
 type denunciaJSON struct {
-	ID           string `json:"id"`
-	Categoria    string `json:"categoria"`
-	Descricao    string `json:"descricao"`
-	RecebidaEm   string `json:"recebida_em"`
-	TotalImagens int    `json:"total_imagens"`
+	ID         string      `json:"id"`
+	Categoria  string      `json:"categoria"`
+	Descricao  string      `json:"descricao"`
+	RecebidaEm string      `json:"recebida_em"`
+	Anexos     []anexoJSON `json:"anexos"`
 }
 
 func (e *Entregador) entregar(ctx context.Context, d store.Denuncia) error {
 	id := uuid(d.ID)
-	corpo, err := json.Marshal(denunciaJSON{id, d.Categoria, d.Descricao, d.RecebidaEm, len(d.Anexos)})
+	anexos := make([]anexoJSON, len(d.Anexos))
+	for i, a := range d.Anexos {
+		anexos[i] = anexoJSON{a.Tipo, a.Tamanho, a.Extensao, a.Limpo}
+	}
+	corpo, err := json.Marshal(denunciaJSON{id, d.Categoria, d.Descricao, d.RecebidaEm, anexos})
 	if err != nil {
 		return err
 	}
-	if err := e.enviar(ctx, "POST", "/api/denuncias/receber", "application/json", corpo); err != nil {
+	if _, err := e.enviar(ctx, "POST", "/api/denuncias/receber", corpo); err != nil {
 		return err
 	}
-	for n, anexo := range d.Anexos {
-		jpeg, err := e.Fila.Anexo(anexo)
-		if err != nil {
-			return err
-		}
-		caminho := fmt.Sprintf("/api/denuncias/receber/%s/imagens/%d", id, n)
-		if err := e.enviar(ctx, "PUT", caminho, "image/jpeg", jpeg); err != nil {
+	for n, a := range d.Anexos {
+		if err := e.entregarAnexo(ctx, id, n, a); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (e *Entregador) enviar(ctx context.Context, metodo, caminho, tipo string, corpo []byte) error {
+type destinoJSON struct {
+	Existe bool   `json:"existe"`
+	URL    string `json:"url"`
+}
+
+// entregarAnexo pede ao OS onde subir o anexo n e sobe direto no Storage, lendo do
+// SQLite parte por parte (um anexo de 5 GB nunca fica inteiro na memória).
+func (e *Entregador) entregarAnexo(ctx context.Context, id string, n int, a store.Arquivo) error {
+	resp, err := e.enviar(ctx, "POST", fmt.Sprintf("/api/denuncias/receber/%s/anexos/%d", id, n), nil)
+	if err != nil {
+		return err
+	}
+	var destino destinoJSON
+	if err := json.Unmarshal(resp, &destino); err != nil {
+		return fmt.Errorf("anexo %d: resposta ilegível do OS: %w", n, err)
+	}
+	if destino.Existe {
+		return nil
+	}
+	if destino.URL == "" {
+		return fmt.Errorf("anexo %d: o OS não mandou para onde subir", n)
+	}
+	leitor, escritor := io.Pipe()
+	go func() { escritor.CloseWithError(e.Fila.LerArquivo(a.ID, escritor)) }()
+	req, err := http.NewRequestWithContext(ctx, "PUT", destino.URL, leitor)
+	if err != nil {
+		leitor.Close()
+		return err
+	}
+	req.ContentLength = a.Tamanho
+	req.Header.Set("Content-Type", tipoNoStorage(a.Tipo))
+	_, err = e.fazer(req)
+	leitor.Close()
+	return err
+}
+
+// tipoNoStorage é o Content-Type com que o Storage vai servir o anexo. Só a foto que
+// este canal refez (JPEG sem metadado) vai como imagem, para abrir na tela do admin;
+// o resto vai como binário e só baixa: um HTML enviado por qualquer pessoa nunca
+// abre no navegador de quem lê.
+func tipoNoStorage(tipo string) string {
+	if tipo == "image/jpeg" {
+		return tipo
+	}
+	return "application/octet-stream"
+}
+
+// enviar chama uma rota do OS (com o token) e devolve o corpo da resposta.
+func (e *Entregador) enviar(ctx context.Context, metodo, caminho string, corpo []byte) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, metodo, strings.TrimRight(e.URL, "/")+caminho, bytes.NewReader(corpo))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+e.Token)
-	req.Header.Set("Content-Type", tipo)
+	req.Header.Set("Content-Type", "application/json")
+	return e.fazer(req)
+}
+
+// fazer manda o request e devolve o corpo, ou um erro com o status e o começo da resposta.
+func (e *Entregador) fazer(req *http.Request) ([]byte, error) {
 	res, err := e.Client.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer res.Body.Close()
+	corpo, _ := io.ReadAll(io.LimitReader(res.Body, 64<<10))
 	if res.StatusCode/100 != 2 {
-		msg, _ := io.ReadAll(io.LimitReader(res.Body, 300))
-		return fmt.Errorf("%s %s: HTTP %d: %s", metodo, caminho, res.StatusCode, strings.TrimSpace(string(msg)))
+		msg := strings.TrimSpace(string(corpo[:min(len(corpo), 300)]))
+		return nil, fmt.Errorf("%s %s: HTTP %d: %s", req.Method, req.URL.Path, res.StatusCode, msg)
 	}
-	return nil
+	return corpo, nil
 }
 
 // uuid formata os 32 hex do id local como uuid (o tipo da coluna no OS).

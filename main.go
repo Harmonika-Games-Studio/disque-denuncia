@@ -39,16 +39,28 @@ func run() error {
 	}
 	defer conn.Close()
 	st := store.New(conn)
+	gb, err := strconv.ParseInt(env("ESPACO_MAX_GB", "50"), 10, 64)
+	if err != nil || gb < 1 {
+		return errors.New("ESPACO_MAX_GB deve ser um número de GB, 1 ou mais")
+	}
+	st.EspacoMax = gb << 30
 
-	if err := iniciarEntrega(ctx, st); err != nil {
+	horaEntrega, err := iniciarEntrega(ctx, st)
+	if err != nil {
 		return err
 	}
+	go limparRascunhos(ctx, st)
 
+	cfg := web.Config{
+		Empresa:     env("EMPRESA", "Harmonika"),
+		EntregaHora: horaEntrega,
+		RepoURL:     env("REPO_URL", "https://github.com/Harmonika-Games-Studio/disque-denuncia"),
+	}
 	srv := &http.Server{
 		Addr:              env("ADDR", "127.0.0.1:8080"),
-		Handler:           web.Handler(st, env("EMPRESA", "Harmonika")),
+		Handler:           web.Handler(st, cfg),
 		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       2 * time.Minute, // upload de até 3 imagens em rede lenta
+		ReadTimeout:       2 * time.Minute, // uma parte de 8 MB (ou o formulário sem JavaScript) em rede lenta
 		WriteTimeout:      2 * time.Minute,
 		// O log interno do net/http escreve o IP do cliente ("http: panic serving
 		// 1.2.3.4:5678", erros de TLS). Vai para o vazio.
@@ -65,28 +77,49 @@ func run() error {
 	return nil
 }
 
-// iniciarEntrega liga a entrega diária ao HarmonikaOS. Sem OS_URL, as denúncias
-// ficam só aqui, no painel /admin.
-func iniciarEntrega(ctx context.Context, st *store.Store) error {
+// iniciarEntrega liga a entrega diária ao HarmonikaOS e devolve a hora dela. Sem
+// OS_URL, as denúncias ficam só aqui, no painel /admin, e a hora é -1.
+func iniciarEntrega(ctx context.Context, st *store.Store) (int, error) {
 	url, token := os.Getenv("OS_URL"), os.Getenv("OS_TOKEN")
 	if url == "" {
 		slog.Warn("OS_URL vazio: entrega ao HarmonikaOS desligada; as denúncias ficam no painel /admin")
-		return nil
+		return -1, nil
 	}
 	if token == "" {
-		return errors.New("OS_URL sem OS_TOKEN")
+		return 0, errors.New("OS_URL sem OS_TOKEN")
 	}
 	hora, err := strconv.Atoi(env("ENTREGA_HORA", "8"))
 	if err != nil || hora < 0 || hora > 23 {
-		return errors.New("ENTREGA_HORA deve ser uma hora de 0 a 23")
+		return 0, errors.New("ENTREGA_HORA deve ser uma hora de 0 a 23")
 	}
+	// Sem timeout total no cliente: um anexo de centenas de MB leva minutos para
+	// subir. Quem limita é o tempo de conexão e de resposta.
+	cliente := &http.Client{Transport: &http.Transport{
+		Proxy: http.ProxyFromEnvironment, TLSHandshakeTimeout: 30 * time.Second,
+		ResponseHeaderTimeout: 2 * time.Minute,
+	}}
 	e := &entrega.Entregador{
-		Fila: st, URL: url, Token: token, HoraEntrega: hora,
-		Client: &http.Client{Timeout: time.Minute}, Agora: time.Now,
+		Fila: st, URL: url, Token: token, HoraEntrega: hora, Client: cliente, Agora: time.Now,
 	}
 	go e.Run(ctx, 10*time.Minute)
 	slog.Info("entrega ao HarmonikaOS ligada", "url", url, "a_partir_das", hora)
-	return nil
+	return hora, nil
+}
+
+// limparRascunhos apaga, de hora em hora, os envios abandonados no meio.
+func limparRascunhos(ctx context.Context, st *store.Store) {
+	t := time.NewTicker(time.Hour)
+	defer t.Stop()
+	for {
+		if _, err := st.LimparRascunhos(time.Now()); err != nil {
+			slog.Error("limpeza de rascunhos falhou", "err", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
 }
 
 func env(key, fallback string) string {

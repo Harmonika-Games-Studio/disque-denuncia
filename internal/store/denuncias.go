@@ -9,11 +9,10 @@ import (
 	"unicode/utf8"
 )
 
-// Nova é o que a página pública manda. As imagens já chegam limpas (pacote imagem).
+// Nova é o texto que a página pública manda ao concluir. Os anexos já estão no rascunho.
 type Nova struct {
 	Categoria string
 	Descricao string
-	Imagens   [][]byte
 }
 
 type Denuncia struct {
@@ -24,10 +23,10 @@ type Denuncia struct {
 	Status       string
 	Parecer      string
 	AtualizadaEm string
-	Anexos       []string // ids, na ordem do envio
+	Anexos       []Arquivo // na ordem do envio (em Listar, só a quantidade conta)
 }
 
-// Validar confere a denúncia antes de qualquer trabalho com as imagens.
+// Validar confere o texto antes de qualquer trabalho com os anexos.
 func (n Nova) Validar() error {
 	if !valido(Categorias, n.Categoria) {
 		return fmt.Errorf("%w: escolha o assunto da denúncia", ErrInvalid)
@@ -39,14 +38,12 @@ func (n Nova) Validar() error {
 	if tam > DescricaoMax {
 		return fmt.Errorf("%w: a descrição passa de %d caracteres", ErrInvalid, DescricaoMax)
 	}
-	if len(n.Imagens) > MaxImagens {
-		return fmt.Errorf("%w: envie no máximo %d imagens", ErrInvalid, MaxImagens)
-	}
 	return nil
 }
 
-// Registrar grava a denúncia e as imagens numa transação só. `agora` decide só a data.
-func (s *Store) Registrar(n Nova, agora time.Time) error {
+// Concluir transforma o rascunho em denúncia, numa transação só: confere que cada
+// anexo chegou inteiro, grava a denúncia (só com a data) e passa os anexos para ela.
+func (s *Store) Concluir(envioID string, n Nova, agora time.Time) error {
 	if err := n.Validar(); err != nil {
 		return err
 	}
@@ -56,6 +53,16 @@ func (s *Store) Registrar(n Nova, agora time.Time) error {
 	}
 	defer tx.Rollback()
 
+	var existe int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM envios WHERE id = ?`, envioID).Scan(&existe); err != nil {
+		return err
+	}
+	if existe == 0 {
+		return ErrNotFound
+	}
+	if err := conferirCompletos(tx, envioID); err != nil {
+		return err
+	}
 	dia := Dia(agora)
 	var hoje int
 	if err := tx.QueryRow(`SELECT COUNT(*) FROM denuncias WHERE recebida_em = ?`, dia).Scan(&hoje); err != nil {
@@ -64,20 +71,105 @@ func (s *Store) Registrar(n Nova, agora time.Time) error {
 	if hoje >= LimitePorDia {
 		return ErrLimite
 	}
+	return gravarDenuncia(tx, envioID, n, dia)
+}
 
+func gravarDenuncia(tx *sql.Tx, envioID string, n Nova, dia string) error {
 	id := novoID()
-	_, err = tx.Exec(`INSERT INTO denuncias (id, categoria, descricao, recebida_em) VALUES (?, ?, ?, ?)`,
+	_, err := tx.Exec(`INSERT INTO denuncias (id, categoria, descricao, recebida_em) VALUES (?, ?, ?, ?)`,
 		id, n.Categoria, strings.TrimSpace(n.Descricao), dia)
 	if err != nil {
 		return err
 	}
-	for i, jpeg := range n.Imagens {
-		_, err := tx.Exec(`INSERT INTO anexos (id, denuncia_id, posicao, jpeg) VALUES (?, ?, ?, ?)`, novoID(), id, i, jpeg)
-		if err != nil {
+	if _, err := tx.Exec(`UPDATE arquivos SET denuncia_id = ?, envio_id = NULL WHERE envio_id = ?`, id, envioID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM envios WHERE id = ?`, envioID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// conferirCompletos recusa o rascunho se algum anexo não chegou inteiro.
+func conferirCompletos(tx *sql.Tx, envioID string) error {
+	rows, err := tx.Query(`
+		SELECT a.posicao, a.tamanho, COUNT(p.n), COALESCE(SUM(length(p.dados)), 0)
+		  FROM arquivos a LEFT JOIN partes p ON p.arquivo_id = a.id
+		 WHERE a.envio_id = ?
+		 GROUP BY a.id, a.posicao, a.tamanho`, envioID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var pos, partes int
+		var tamanho, soma int64
+		if err := rows.Scan(&pos, &tamanho, &partes, &soma); err != nil {
+			return err
+		}
+		if partes != Partes(tamanho) || soma != tamanho {
+			return fmt.Errorf("%w: o arquivo %d não chegou inteiro; envie de novo", ErrInvalid, pos+1)
+		}
+	}
+	return rows.Err()
+}
+
+// ArquivoPronto é um anexo com o conteúdo inteiro em mãos (formulário sem JavaScript, testes).
+type ArquivoPronto struct {
+	Dados    []byte
+	Extensao string
+}
+
+// Rascunho abre um rascunho já com os anexos inteiros (o formulário sem JavaScript).
+// Daí em diante é o mesmo caminho do envio em pedaços: limpar e Concluir.
+func (s *Store) Rascunho(anexos []ArquivoPronto, agora time.Time) (string, error) {
+	envio, err := s.NovoEnvio(agora)
+	if err != nil {
+		return "", err
+	}
+	for _, a := range anexos {
+		if err := s.gravarInteiro(envio, a); err != nil {
+			s.Descartar(envio)
+			return "", err
+		}
+	}
+	return envio, nil
+}
+
+// Descartar apaga um rascunho e os arquivos dele (envio que deu errado no meio).
+func (s *Store) Descartar(envio string) error {
+	_, err := s.db.Exec(`DELETE FROM envios WHERE id = ?`, envio)
+	return err
+}
+
+// Registrar faz rascunho e Concluir de uma vez, sem limpar nada: os anexos têm que
+// chegar limpos. Serve aos testes de quem precisa de denúncias prontas no banco.
+func (s *Store) Registrar(n Nova, anexos []ArquivoPronto, agora time.Time) error {
+	if err := n.Validar(); err != nil {
+		return err
+	}
+	envio, err := s.Rascunho(anexos, agora)
+	if err != nil {
+		return err
+	}
+	if err := s.Concluir(envio, n, agora); err != nil {
+		s.Descartar(envio)
+		return err
+	}
+	return nil
+}
+
+func (s *Store) gravarInteiro(envio string, a ArquivoPronto) error {
+	id, err := s.NovoArquivo(envio, int64(len(a.Dados)), a.Extensao)
+	if err != nil {
+		return err
+	}
+	for k := range Partes(int64(len(a.Dados))) {
+		if err := s.GravarParte(envio, id, k, a.Dados[k*TamParte:min(len(a.Dados), (k+1)*TamParte)]); err != nil {
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 // Listar traz as denúncias do status pedido (vazio = todas), das mais recentes para as
@@ -85,7 +177,7 @@ func (s *Store) Registrar(n Nova, agora time.Time) error {
 func (s *Store) Listar(status string) ([]Denuncia, error) {
 	rows, err := s.db.Query(`
 		SELECT d.id, d.categoria, d.descricao, d.recebida_em, d.status, d.parecer, COALESCE(d.atualizada_em, ''),
-		       (SELECT COUNT(*) FROM anexos a WHERE a.denuncia_id = d.id)
+		       (SELECT COUNT(*) FROM arquivos a WHERE a.denuncia_id = d.id)
 		  FROM denuncias d
 		 WHERE ? = '' OR d.status = ?
 		 ORDER BY d.recebida_em DESC, d.id`, status, status)
@@ -102,7 +194,7 @@ func (s *Store) Listar(status string) ([]Denuncia, error) {
 		if err != nil {
 			return nil, err
 		}
-		d.Anexos = make([]string, anexos)
+		d.Anexos = make([]Arquivo, anexos)
 		list = append(list, d)
 	}
 	return list, rows.Err()
@@ -119,35 +211,8 @@ func (s *Store) Buscar(id string) (Denuncia, error) {
 	if err != nil {
 		return d, err
 	}
-	d.Anexos, err = s.anexosDe(id)
+	d.Anexos, err = s.arquivos(`denuncia_id`, id)
 	return d, err
-}
-
-func (s *Store) anexosDe(id string) ([]string, error) {
-	rows, err := s.db.Query(`SELECT id FROM anexos WHERE denuncia_id = ? ORDER BY posicao`, id)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var ids []string
-	for rows.Next() {
-		var a string
-		if err := rows.Scan(&a); err != nil {
-			return nil, err
-		}
-		ids = append(ids, a)
-	}
-	return ids, rows.Err()
-}
-
-// Anexo devolve o JPEG de um anexo.
-func (s *Store) Anexo(id string) ([]byte, error) {
-	var jpeg []byte
-	err := s.db.QueryRow(`SELECT jpeg FROM anexos WHERE id = ?`, id).Scan(&jpeg)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
-	return jpeg, err
 }
 
 // Atualizar muda o status e o parecer. Categoria, descrição e anexos são a denúncia
@@ -204,8 +269,8 @@ func (s *Store) Pendentes(hoje string) ([]Denuncia, error) {
 	return list, nil
 }
 
-// Remover apaga a denúncia e os anexos (ON DELETE CASCADE). Com secure_delete, o
-// espaço que ela ocupava no arquivo é zerado.
+// Remover apaga a denúncia, os anexos e as partes (ON DELETE CASCADE). Com
+// secure_delete, o espaço que ocupavam no arquivo é zerado.
 func (s *Store) Remover(id string) error {
 	_, err := s.db.Exec(`DELETE FROM denuncias WHERE id = ?`, id)
 	return err

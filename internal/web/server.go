@@ -26,31 +26,45 @@ const htmxConfig = `{"allowEval":false,"includeIndicatorStyles":false,"responseH
 const csp = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self'; " +
 	"connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
 
-// O htmx vem embutido no binário (2.0.4, SHA-384 no README). Buscá-lo num CDN
-// entregaria o IP de quem denuncia a um terceiro.
+// O htmx (2.0.4, SHA-384 no README) e o canal.js vêm embutidos no binário. Buscá-los
+// num CDN entregaria o IP de quem denuncia a um terceiro.
 //
-//go:embed static/htmx.min.js
+//go:embed static/htmx.min.js static/canal.js
 var static embed.FS
 
-type Server struct {
-	store   *store.Store
-	empresa string
-	agora   func() time.Time
+// Config é o que a página pública mostra sobre o canal.
+type Config struct {
+	Empresa string
+	// EntregaHora é a hora (Brasília) em que as denúncias vão para o sistema da
+	// empresa; -1 = entrega desligada (a administração lê no painel daqui).
+	EntregaHora int
+	// RepoURL é onde o código do canal está aberto, para qualquer um conferir.
+	RepoURL string
 }
 
-func Handler(s *store.Store, empresa string) http.Handler {
-	srv := &Server{store: s, empresa: empresa, agora: time.Now}
+type Server struct {
+	store *store.Store
+	cfg   Config
+	agora func() time.Time
+}
+
+func Handler(s *store.Store, cfg Config) http.Handler {
+	srv := &Server{store: s, cfg: cfg, agora: time.Now}
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /{$}", srv.formulario)
-	mux.HandleFunc("POST /denuncias", srv.enviar)
+	mux.HandleFunc("POST /envios", srv.novoEnvio)
+	mux.HandleFunc("POST /envios/{id}/arquivos", srv.novoArquivo)
+	mux.HandleFunc("PUT /envios/{id}/arquivos/{arquivo}/partes/{n}", srv.gravarParte)
+	mux.HandleFunc("POST /envios/{id}/concluir", srv.concluir)
+	mux.HandleFunc("POST /denuncias", srv.enviarSemJS)
 	mux.Handle("GET /static/", http.FileServerFS(static))
 
 	admin := http.NewServeMux()
 	admin.HandleFunc("GET /admin", srv.painel)
 	admin.HandleFunc("GET /admin/denuncias/{id}", srv.detalhe)
 	admin.HandleFunc("PUT /admin/denuncias/{id}", srv.atualizar)
-	admin.HandleFunc("GET /admin/anexos/{id}", srv.anexo)
+	admin.HandleFunc("GET /admin/arquivos/{id}", srv.arquivo)
 	mux.Handle("/admin", srv.auth(admin))
 	mux.Handle("/admin/", srv.auth(admin))
 
@@ -103,12 +117,14 @@ func fail(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		code, msg = http.StatusNotFound, err.Error()
-	case errors.Is(err, store.ErrInvalid), errors.Is(err, errImagem):
+	case errors.Is(err, store.ErrInvalid), errors.Is(err, errArquivo):
 		code, msg = http.StatusBadRequest, err.Error()
 	case errors.Is(err, store.ErrLimite):
 		code, msg = http.StatusTooManyRequests, err.Error()
+	case errors.Is(err, store.ErrCheio):
+		code, msg = http.StatusInsufficientStorage, err.Error()
 	case errors.As(err, &grande):
-		code, msg = http.StatusRequestEntityTooLarge, "o envio passa do tamanho máximo (imagens de até 8 MB)"
+		code, msg = http.StatusRequestEntityTooLarge, "o envio passa do tamanho máximo"
 	default:
 		slog.Error("erro interno", "err", err)
 	}

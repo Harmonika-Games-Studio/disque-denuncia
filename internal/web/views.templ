@@ -29,7 +29,13 @@ templ base(title string) {
 				#flash:empty { display: none; }
 				#flash { padding: .6rem; background: #fdecea; border-left: 3px solid #c0392b; }
 				.garantias { background: #f4f7f4; border-left: 3px solid #4a8f3c; padding: .8rem 1rem; }
-				.garantias li { margin: .25rem 0; }
+				.garantias p { margin: 0; }
+				.garantias li { margin: .35rem 0; }
+				details { margin-top: .6rem; }
+				summary { cursor: pointer; color: #2e6b24; font-weight: 600; }
+				#progresso { margin-top: 1rem; display: flex; gap: .6rem; align-items: center; }
+				#progresso[hidden] { display: none; }
+				#progresso progress { flex: 1; }
 				.ok { background: #f4f7f4; border-left: 3px solid #4a8f3c; padding: 1rem; }
 				.descricao { white-space: pre-wrap; background: #f6f6f6; padding: .8rem; }
 				.anexos img { max-width: 100%; margin: .5rem 0; border: 1px solid #ddd; }
@@ -48,33 +54,20 @@ templ Flash(msg string) {
 
 // --- página pública ---
 
-templ FormularioPage(empresa string) {
-	@base("Canal de denúncia · " + empresa) {
-		<h1>Canal de denúncia · { empresa }</h1>
-		<div class="garantias">
-			<strong>Este canal é anônimo.</strong>
-			<ul>
-				<li>Não pedimos nome, e-mail nem login.</li>
-				<li>O sistema não guarda IP, navegador, cookie nem a hora do envio: só a data.</li>
-				<li>Das fotos, só ficam os pixels. Modelo do celular, localização e data da foto são apagados.</li>
-				<li>Só a administração da empresa lê as denúncias.</li>
-			</ul>
-			<small>
-				Para ficar ainda mais seguro: envie do seu celular pessoal, fora do Wi-Fi da empresa, e não
-				escreva detalhes que só você saberia. Não há protocolo nem acompanhamento: depois de enviada,
-				ninguém consegue ligar a denúncia a você, nem você.
-			</small>
-		</div>
+templ FormularioPage(cfg Config) {
+	@base("Canal de denúncia · " + cfg.Empresa) {
+		<h1>Canal de denúncia · { cfg.Empresa }</h1>
+		@Garantias(cfg)
 		<div id="canal">
 			<p id="flash" role="alert"></p>
 			<form
+				id="form-denuncia"
 				action="/denuncias"
 				method="post"
 				enctype="multipart/form-data"
-				hx-post="/denuncias"
-				hx-encoding="multipart/form-data"
-				hx-target="#canal"
-				hx-disabled-elt="find button"
+				data-max-total={ strconv.Itoa(store.MaxTotal) }
+				data-max-arquivos={ strconv.Itoa(store.MaxArquivos) }
+				data-max-rotulo={ store.RotuloTamanho(store.MaxTotal) }
 			>
 				<label for="categoria">Assunto</label>
 				<select id="categoria" name="categoria" required>
@@ -92,12 +85,70 @@ templ FormularioPage(empresa string) {
 					maxlength={ strconv.Itoa(store.DescricaoMax) }
 					placeholder="Conte o que aconteceu, onde e quando, e quem estava envolvido."
 				></textarea>
-				<label for="imagens">Imagens (opcional, até { strconv.Itoa(store.MaxImagens) }, JPG, PNG ou WebP de até 8 MB)</label>
-				<input id="imagens" type="file" name="imagens" multiple accept="image/jpeg,image/png,image/webp"/>
+				<label for="arquivos">Arquivos (opcional): fotos, prints, documentos, vídeos ou áudios, até { store.RotuloTamanho(store.MaxTotal) } no total</label>
+				<input id="arquivos" type="file" name="arquivos" multiple/>
+				<small>Fotos, vídeos, áudios, PDF e documentos do Office perdem os metadados aqui. Outros tipos vão como estão: veja “Saiba mais”.</small>
+				<div id="progresso" hidden>
+					<progress max="100" value="0"></progress>
+					<span></span>
+				</div>
 				<button type="submit">Enviar denúncia</button>
 			</form>
 		</div>
+		<script src="/static/canal.js"></script>
 	}
+}
+
+// Garantias é o que o canal promete, em uma frase, com os detalhes em “Saiba mais”.
+templ Garantias(cfg Config) {
+	<div class="garantias">
+		<p>
+			<strong>Este canal é anônimo.</strong>
+			if cfg.RepoURL != "" {
+				Não pedimos seu nome, não guardamos seu IP, apagamos os metadados dos arquivos, e o código está aberto no <a href={ templ.SafeURL(cfg.RepoURL) } target="_blank" rel="noopener noreferrer">GitHub</a>.
+			} else {
+				Não pedimos seu nome, não guardamos seu IP e apagamos os metadados dos arquivos.
+			}
+		</p>
+		<details>
+			<summary>Saiba mais</summary>
+			<ul>
+				<li>Não pedimos nome, e-mail nem login, e o canal não usa cookie.</li>
+				<li>Não guardamos o seu IP, o seu navegador nem a hora do envio: só a data.</li>
+				<li>Fotos (JPG, PNG e WebP) são refeitas aqui e ficam só os pixels. Modelo do celular, localização e data da foto são apagados.</li>
+				<li>
+					Vídeos e áudios do celular (MP4, MOV, M4A, MP3) perdem a localização, o modelo do aparelho e a data da gravação.
+					Documentos do Word, Excel, PowerPoint e LibreOffice, PDF e GIF perdem o autor, quem comentou ou alterou, a
+					empresa, os caminhos do computador, as datas e o EXIF das fotos coladas neles.
+				</li>
+				<li>
+					<strong>O que fica:</strong> o conteúdo. A sua voz num áudio, o que aparece num vídeo, um nome escrito no
+					documento, uma assinatura escaneada. Outros tipos de arquivo (ZIP, HEIC, vídeo de drone ou câmera de ação),
+					PDF com senha e documento acima de 128 MB vão como estão e podem levar o seu nome ou a localização. Se puder,
+					mande um print ou uma foto da tela no lugar.
+				</li>
+				if cfg.EntregaHora >= 0 {
+					<li>
+						Todo dia, a partir das { strconv.Itoa(cfg.EntregaHora) }h, as denúncias dos dias anteriores são enviadas ao sistema
+						interno da empresa, só com a data, e apagadas daqui. Lá, só a administração lê.
+					</li>
+				} else {
+					<li>As denúncias ficam guardadas aqui, e só a administração lê.</li>
+				}
+				if cfg.RepoURL != "" {
+					<li>
+						O código deste canal é aberto: <a href={ templ.SafeURL(cfg.RepoURL) } target="_blank" rel="noopener noreferrer">{ cfg.RepoURL }</a>.
+						Qualquer pessoa pode conferir que ele faz só o que está escrito aqui.
+					</li>
+				}
+				<li>
+					Para ficar ainda mais seguro: use o seu celular pessoal, fora do Wi-Fi da empresa, e não escreva detalhes
+					que só você saberia. Não há protocolo nem acompanhamento: depois de enviada, ninguém consegue ligar a
+					denúncia a você, nem você.
+				</li>
+			</ul>
+		</details>
+	</div>
 }
 
 templ Recebida() {
@@ -109,9 +160,9 @@ templ Recebida() {
 }
 
 // RecebidaPage é a resposta para quem enviou sem JavaScript (o formulário comum).
-templ RecebidaPage(empresa string) {
-	@base("Canal de denúncia · " + empresa) {
-		<h1>Canal de denúncia · { empresa }</h1>
+templ RecebidaPage(cfg Config) {
+	@base("Canal de denúncia · " + cfg.Empresa) {
+		<h1>Canal de denúncia · { cfg.Empresa }</h1>
 		@Recebida()
 	}
 }
@@ -174,7 +225,18 @@ templ DetalhePage(d store.Denuncia) {
 		if len(d.Anexos) > 0 {
 			<div class="anexos">
 				for _, a := range d.Anexos {
-					<a href={ templ.SafeURL("/admin/anexos/" + a) } target="_blank"><img src={ "/admin/anexos/" + a } alt="Imagem da denúncia"/></a>
+					if ehImagem(a) {
+						<a href={ templ.SafeURL("/admin/arquivos/" + a.ID) } target="_blank"><img src={ "/admin/arquivos/" + a.ID } alt="Imagem da denúncia"/></a>
+					} else {
+						<p>
+							<a href={ templ.SafeURL("/admin/arquivos/" + a.ID) }>{ nomeDoAnexo(a) }</a>
+							if a.Limpo {
+								<small>({ tamanhoLegivel(a.Tamanho) }, metadados removidos pelo canal)</small>
+							} else {
+								<small>({ tamanhoLegivel(a.Tamanho) }, veio como foi enviado e pode conter metadados de quem o criou)</small>
+							}
+						</p>
+					}
 				}
 			</div>
 		}
