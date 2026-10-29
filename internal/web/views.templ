@@ -17,29 +17,48 @@ templ base(title string) {
 			<meta name="htmx-config" content={ htmxConfig }/>
 			<script src="/static/htmx.min.js"></script>
 			<style>
-				body { font: 16px/1.5 system-ui, sans-serif; max-width: 44rem; margin: 2rem auto; padding: 0 1rem; color: #222; }
-				nav { display: flex; gap: 1rem; margin-bottom: 1rem; }
+				:root {
+					color-scheme: dark;
+					--fundo: #0A0A0F; --cartao: #0D0D14; --superficie: #13131A; --elevado: #1C1C27;
+					--borda: #2D2D3D; --borda-clara: #3D3D50;
+					--texto: #F1F5F9; --texto-sec: #94A3B8; --texto-mudo: #6B7280;
+					--laranja: #F97316; --laranja-forte: #EA580C;
+					--verde: #22C55E; --vermelho: #EF4444;
+				}
+				* { box-sizing: border-box; }
+				body { font: 15px/1.6 Inter, system-ui, -apple-system, "Segoe UI", sans-serif; max-width: 42rem; margin: 0 auto; padding: 2.5rem 1rem; background: var(--fundo); color: var(--texto); }
+				h1 { font-size: 1.35rem; font-weight: 600; margin: 0 0 1.25rem; padding-left: .75rem; border-left: 3px solid var(--laranja); }
+				h2 { font-size: 1.1rem; font-weight: 600; }
+				a { color: var(--laranja); }
+				a:hover { color: var(--laranja-forte); }
+				nav { display: flex; gap: 1rem; margin-bottom: 1.25rem; }
 				table { width: 100%; border-collapse: collapse; }
-				td, th { padding: .45rem; border-bottom: 1px solid #ddd; text-align: left; vertical-align: top; }
-				label { display: block; font-weight: 600; margin: 1rem 0 .3rem; }
-				select, textarea, input[type=file] { width: 100%; box-sizing: border-box; padding: .45rem; font: inherit; }
-				textarea { min-height: 12rem; }
-				button { margin-top: 1rem; padding: .55rem 1.2rem; font: inherit; cursor: pointer; }
+				td, th { padding: .55rem .5rem; border-bottom: 1px solid var(--borda); text-align: left; vertical-align: top; }
+				th { color: var(--texto-sec); font-weight: 500; font-size: .85rem; }
+				label { display: block; font-weight: 500; font-size: .9rem; color: var(--texto-sec); margin: 1.1rem 0 .35rem; }
+				select, textarea, input[type=file] { width: 100%; padding: .55rem .7rem; font: inherit; color: var(--texto); background: var(--superficie); border: 1px solid var(--borda); border-radius: 8px; }
+				select:focus, textarea:focus, input:focus, button:focus-visible, summary:focus-visible { outline: 1px solid var(--laranja); outline-offset: 0; border-color: var(--laranja); }
+				textarea { min-height: 12rem; resize: vertical; }
+				option { background: var(--superficie); color: var(--texto); }
+				input[type=file]::file-selector-button { font: inherit; color: var(--texto); background: var(--elevado); border: 1px solid var(--borda-clara); border-radius: 6px; padding: .3rem .8rem; margin-right: .8rem; cursor: pointer; }
+				button { margin-top: 1.25rem; padding: .6rem 1.3rem; font: inherit; font-weight: 600; color: #fff; background: var(--laranja); border: 0; border-radius: 8px; cursor: pointer; }
+				button:hover { background: var(--laranja-forte); }
 				button:disabled { opacity: .5; cursor: wait; }
 				#flash:empty { display: none; }
-				#flash { padding: .6rem; background: #fdecea; border-left: 3px solid #c0392b; }
-				.garantias { background: #f4f7f4; border-left: 3px solid #4a8f3c; padding: .8rem 1rem; }
+				#flash { padding: .7rem .9rem; margin: 0 0 1rem; color: #FCA5A5; background: rgba(239, 68, 68, .08); border: 1px solid rgba(239, 68, 68, .4); border-radius: 8px; }
+				.garantias { background: var(--cartao); border: 1px solid var(--borda); border-radius: 8px; padding: 1rem 1.15rem; margin-bottom: 1.5rem; }
 				.garantias p { margin: 0; }
-				.garantias li { margin: .35rem 0; }
-				details { margin-top: .6rem; }
-				summary { cursor: pointer; color: #2e6b24; font-weight: 600; }
-				#progresso { margin-top: 1rem; display: flex; gap: .6rem; align-items: center; }
+				.garantias ul { margin: .75rem 0 0; padding-left: 1.2rem; color: var(--texto-sec); }
+				.garantias li { margin: .4rem 0; }
+				details { margin-top: .75rem; }
+				summary { cursor: pointer; color: var(--laranja); font-weight: 600; font-size: .9rem; }
+				#progresso { margin-top: 1rem; display: flex; gap: .7rem; align-items: center; color: var(--texto-sec); font-size: .9rem; }
 				#progresso[hidden] { display: none; }
-				#progresso progress { flex: 1; }
-				.ok { background: #f4f7f4; border-left: 3px solid #4a8f3c; padding: 1rem; }
-				.descricao { white-space: pre-wrap; background: #f6f6f6; padding: .8rem; }
-				.anexos img { max-width: 100%; margin: .5rem 0; border: 1px solid #ddd; }
-				small, .muted { color: #666; }
+				#progresso progress { flex: 1; height: .5rem; accent-color: var(--laranja); }
+				.ok { background: rgba(34, 197, 94, .06); border: 1px solid rgba(34, 197, 94, .35); border-radius: 8px; padding: 1rem 1.15rem; }
+				.descricao { white-space: pre-wrap; background: var(--superficie); border: 1px solid var(--borda); border-radius: 8px; padding: .9rem; }
+				.anexos img { max-width: 100%; margin: .5rem 0; border: 1px solid var(--borda); border-radius: 8px; }
+				small, .muted { color: var(--texto-mudo); }
 			</style>
 		</head>
 		<body>
