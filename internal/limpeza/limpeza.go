@@ -1,13 +1,14 @@
 // Package limpeza tira os metadados dos anexos que não são foto: vídeo e áudio do
-// celular (MP4, MOV, M4A, 3GP), MP3, GIF, documentos do Office e do LibreOffice e PDF.
-// As fotos (JPG, PNG, WebP) são refeitas do zero no pacote imagem.
+// celular (MP4, MOV, M4A, 3GP), MP3, GIF, documentos do Office e do LibreOffice, PDF e
+// ZIP comum (reaberto, com cada arquivo de dentro limpo pelo tipo dele). As fotos
+// (JPG, PNG, WebP) são refeitas do zero no pacote imagem.
 //
 // Dois jeitos, conforme o formato:
 //
 //   - Remendos, no mesmo lugar (vídeo, áudio): o arquivo não muda de tamanho nem de
 //     estrutura. O bloco de metadados vira um bloco vazio do mesmo tamanho e as datas
 //     são zeradas. Funciona num vídeo de 5 GB sem lê-lo inteiro: só os cabeçalhos são lidos.
-//   - Arquivo novo (GIF, Office, PDF): o arquivo é lido inteiro e regravado sem os
+//   - Arquivo novo (GIF, Office, PDF, ZIP): o arquivo é lido inteiro e regravado sem os
 //     campos de autor, datas, caminhos e programa. Por isso esses têm teto de tamanho
 //     (o servidor guarda tudo na memória).
 //
@@ -38,7 +39,7 @@ const (
 	FormatoMP4         // caixas ISO BMFF / QuickTime: MP4, MOV, M4A, 3GP
 	FormatoMP3
 	FormatoGIF
-	FormatoZip // talvez Office/LibreOffice; Office confirma
+	FormatoZip // Office/LibreOffice (Office confirma) ou ZIP comum (ZIP)
 	FormatoPDF
 )
 

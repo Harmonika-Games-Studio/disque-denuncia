@@ -60,14 +60,19 @@ func (s *Store) NovoEnvio(agora time.Time) (string, error) {
 	return id, err
 }
 
-// NovoArquivo declara um anexo do rascunho, com o tamanho total que vai chegar.
-func (s *Store) NovoArquivo(envioID string, tamanho int64, extensao string) (string, error) {
+// NovoArquivo declara um anexo do rascunho, com o tamanho total que vai chegar, e
+// devolve a POSIÇÃO dele no rascunho (0, 1, 2…). O id do arquivo fica só no
+// servidor: ele sobrevive à conclusão (é o mesmo que o painel usa em
+// /admin/arquivos/{id}), e se aparecesse na URL pública, o log de acesso do proxy
+// (IP, hora, caminho) ligaria quem enviou à denúncia. A posição e o id do rascunho
+// não ligam a nada: o rascunho some ao concluir.
+func (s *Store) NovoArquivo(envioID string, tamanho int64, extensao string) (int, error) {
 	if tamanho <= 0 {
-		return "", fmt.Errorf("%w: arquivo vazio", ErrInvalid)
+		return 0, fmt.Errorf("%w: arquivo vazio", ErrInvalid)
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
-		return "", err
+		return 0, err
 	}
 	defer tx.Rollback()
 
@@ -76,39 +81,39 @@ func (s *Store) NovoArquivo(envioID string, tamanho int64, extensao string) (str
 	err = tx.QueryRow(`SELECT (SELECT COUNT(*) FROM envios WHERE id = ?), COUNT(*), COALESCE(SUM(tamanho), 0)
 		FROM arquivos WHERE envio_id = ?`, envioID, envioID).Scan(&existe, &qtd, &soma)
 	if err != nil {
-		return "", err
+		return 0, err
 	}
 	if existe == 0 {
-		return "", ErrNotFound
+		return 0, ErrNotFound
 	}
 	if qtd >= MaxArquivos {
-		return "", fmt.Errorf("%w: envie no máximo %d arquivos", ErrInvalid, MaxArquivos)
+		return 0, fmt.Errorf("%w: envie no máximo %d arquivos", ErrInvalid, MaxArquivos)
 	}
 	if soma+tamanho > MaxTotal {
-		return "", fmt.Errorf("%w: os arquivos passam de %s no total", ErrInvalid, RotuloTamanho(MaxTotal))
+		return 0, fmt.Errorf("%w: os arquivos passam de %s no total", ErrInvalid, RotuloTamanho(MaxTotal))
 	}
 	// O espaço é reservado pelo tamanho declarado, antes de a primeira parte chegar.
 	var guardado int64
 	if err := tx.QueryRow(`SELECT COALESCE(SUM(tamanho), 0) FROM arquivos`).Scan(&guardado); err != nil {
-		return "", err
+		return 0, err
 	}
 	if guardado+tamanho > s.EspacoMax {
-		return "", ErrCheio
+		return 0, ErrCheio
 	}
-	id := novoID()
 	_, err = tx.Exec(`INSERT INTO arquivos (id, envio_id, posicao, tamanho, extensao) VALUES (?, ?, ?, ?, ?)`,
-		id, envioID, qtd, tamanho, LimparExtensao(extensao))
+		novoID(), envioID, qtd, tamanho, LimparExtensao(extensao))
 	if err != nil {
-		return "", err
+		return 0, err
 	}
-	return id, tx.Commit()
+	return qtd, tx.Commit()
 }
 
-// GravarParte grava a parte n de um arquivo do rascunho. Repetir a mesma parte
-// substitui (o navegador reenvia a que falhou). Na parte 0, o tipo é lido dos bytes.
-func (s *Store) GravarParte(envioID, arquivoID string, n int, dados []byte) error {
+// GravarParte grava a parte n do arquivo na posição `posicao` do rascunho. Repetir a
+// mesma parte substitui (o navegador reenvia a que falhou). Na parte 0, o tipo é lido dos bytes.
+func (s *Store) GravarParte(envioID string, posicao, n int, dados []byte) error {
+	var arquivoID string
 	var tamanho int64
-	err := s.db.QueryRow(`SELECT tamanho FROM arquivos WHERE id = ? AND envio_id = ?`, arquivoID, envioID).Scan(&tamanho)
+	err := s.db.QueryRow(`SELECT id, tamanho FROM arquivos WHERE envio_id = ? AND posicao = ?`, envioID, posicao).Scan(&arquivoID, &tamanho)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}

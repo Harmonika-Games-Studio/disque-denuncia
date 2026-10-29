@@ -69,7 +69,7 @@ const (
 )
 
 // Office regrava um documento do Office ou do LibreOffice sem os metadados. ErrFormato
-// se o ZIP não é um deles (um .zip comum fica como veio).
+// se o ZIP não é um deles (um .zip comum vai para ZIP, em zip.go).
 func Office(dados []byte) ([]byte, error) {
 	zr, err := zip.NewReader(bytes.NewReader(dados), int64(len(dados)))
 	if err != nil {

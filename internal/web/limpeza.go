@@ -15,7 +15,9 @@ import (
 //   - foto (JPG, PNG, WebP): refeita do zero (pacote imagem). Foto que não abre é
 //     recusada (400), porque a pessoa acha que mandou uma foto limpa;
 //   - vídeo e áudio do celular, MP3: remendos no lugar (pacote limpeza), em qualquer tamanho;
-//   - GIF, Office, LibreOffice e PDF: regravados, até o teto de memória abaixo.
+//   - GIF, Office, LibreOffice e PDF: regravados, até o teto de memória abaixo;
+//   - ZIP comum: reaberto e regravado, até o mesmo teto. Cada arquivo de dentro perde o
+//     nome e passa pela limpeza do tipo dele; a marca de limpo só vem se todos foram limpos.
 //
 // O que não é reconhecido, passa do teto ou não abre (PDF com senha, documento
 // corrompido) vai como veio, sem a marca de limpo; a página avisa que isso pode
@@ -64,7 +66,7 @@ func (s *Server) limparArquivo(a store.Arquivo) error {
 	case limpeza.FormatoGIF:
 		return s.regravar(a, limpeza.GIF)
 	case limpeza.FormatoZip:
-		return s.regravar(a, limpeza.Office)
+		return s.regravarZip(a)
 	case limpeza.FormatoPDF:
 		return s.regravar(a, limpeza.PDF)
 	default:
@@ -119,6 +121,30 @@ func (s *Server) regravar(a store.Arquivo, limpar func([]byte) ([]byte, error)) 
 		return nil
 	}
 	a.Limpo = true
+	return s.store.SubstituirArquivo(a, limpo)
+}
+
+// regravarZip: documento do Office ou do LibreOffice (regravado inteiro, como os
+// outros) ou ZIP comum (reaberto: cada arquivo de dentro é renomeado e passa pela
+// limpeza do tipo dele). O ZIP comum só leva a marca de limpo se tudo o que tinha
+// dentro foi limpo; um .txt ou um HEIC dentro dele deixam o aviso no painel.
+func (s *Server) regravarZip(a store.Arquivo) error {
+	if a.Tamanho > maxDocumentoLimpo {
+		return nil
+	}
+	var bruto bytes.Buffer
+	if err := s.store.LerArquivo(a.ID, &bruto); err != nil {
+		return err
+	}
+	if limpo, ok := semPanico(limpeza.Office, bruto.Bytes()); ok {
+		a.Limpo = true
+		return s.store.SubstituirArquivo(a, limpo)
+	}
+	limpo, completo, err := limpeza.ZIP(bruto.Bytes(), imagem.Limpar)
+	if err != nil || len(limpo) == 0 {
+		return nil
+	}
+	a.Limpo = completo
 	return s.store.SubstituirArquivo(a, limpo)
 }
 

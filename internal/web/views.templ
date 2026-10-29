@@ -132,7 +132,8 @@ templ Garantias(cfg Config) {
 			<ul>
 				<li>Não pedimos nome, e-mail nem login, e o canal não usa cookies.</li>
 				<li>Não guardamos o seu IP, o seu navegador nem a hora do envio, somente o dia de envio.</li>
-				<li>Os arquivos mandados são limpados de todos os metadados, como o modelo do celular, localização e data da foto.</li>
+				<li>Fotos, vídeos, áudios, PDF e documentos do Office são limpos dos metadados, como o modelo do celular, localização, data da foto e autor do documento.</li>
+				<li>Arquivos .zip são reabertos aqui: cada arquivo de dentro perde o nome e é limpo também. Outros tipos de arquivos podem conter resquicios.</li>
 				if cfg.EntregaHora >= 0 {
 					<li>
 						Todo dia, a partir das { strconv.Itoa(cfg.EntregaHora) }h, as denúncias dos dias anteriores são enviadas ao HarmonikaOS e apagadas daqui.

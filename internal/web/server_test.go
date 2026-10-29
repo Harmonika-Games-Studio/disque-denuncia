@@ -69,10 +69,10 @@ func (a ambiente) enviarComo(t *testing.T, campos url.Values, arquivos ...[]byte
 	envio := idDe(t, a.do(t, httptest.NewRequest("POST", "/envios", nil)))
 	for _, conteudo := range arquivos {
 		w := a.do(t, form("POST", "/envios/"+envio+"/arquivos", url.Values{"tamanho": {fmt.Sprint(len(conteudo))}, "extensao": {"bin"}}))
-		arq := idDe(t, w)
+		pos := posicaoDe(t, w)
 		for n := 0; n*store.TamParte < len(conteudo); n++ {
 			parte := conteudo[n*store.TamParte : min(len(conteudo), (n+1)*store.TamParte)]
-			r := httptest.NewRequest("PUT", fmt.Sprintf("/envios/%s/arquivos/%s/partes/%d", envio, arq, n), bytes.NewReader(parte))
+			r := httptest.NewRequest("PUT", fmt.Sprintf("/envios/%s/arquivos/%d/partes/%d", envio, pos, n), bytes.NewReader(parte))
 			if w := a.do(t, r); w.Code != 204 {
 				t.Fatalf("parte %d: %d %s", n, w.Code, w.Body)
 			}
@@ -88,6 +88,19 @@ func idDe(t *testing.T, w *httptest.ResponseRecorder) string {
 		t.Fatalf("esperava {id}: %d %s", w.Code, w.Body)
 	}
 	return v.ID
+}
+
+// posicaoDe lê a resposta de POST /envios/{id}/arquivos: só a posição, nunca o id.
+func posicaoDe(t *testing.T, w *httptest.ResponseRecorder) int {
+	t.Helper()
+	var v struct {
+		Posicao int
+		ID      string
+	}
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &v) != nil || v.ID != "" {
+		t.Fatalf("esperava {posicao}: %d %s", w.Code, w.Body)
+	}
+	return v.Posicao
 }
 
 func validos() url.Values { return url.Values{"categoria": {"fraude"}, "descricao": {texto}} }
@@ -130,7 +143,7 @@ func TestPaginaPublica(t *testing.T) {
 	}
 	for _, trecho := range []string{
 		"Harmonika", "Assédio moral", "<summary>Saiba mais</summary>", "a partir das 8h",
-		cfgTeste.RepoURL, "O que fica:", "Vídeos e áudios do celular", "apagamos os metadados dos arquivos", "até 5 GB no total", `data-max-rotulo="5 GB"`,
+		cfgTeste.RepoURL, "apagamos os metadados dos arquivos", "Arquivos .zip são reabertos aqui", "vai como está", `data-max-rotulo="5 GB"`,
 	} {
 		if !strings.Contains(corpo, trecho) {
 			t.Errorf("faltou %q", trecho)
@@ -270,9 +283,9 @@ func TestExtensaoDoTipo(t *testing.T) {
 func TestEnvioErros(t *testing.T) {
 	a := novo(t)
 	envio := idDe(t, a.do(t, httptest.NewRequest("POST", "/envios", nil)))
-	arq := idDe(t, a.do(t, form("POST", "/envios/"+envio+"/arquivos", url.Values{"tamanho": {"10"}})))
+	pos := fmt.Sprint(posicaoDe(t, a.do(t, form("POST", "/envios/"+envio+"/arquivos", url.Values{"tamanho": {"10"}}))))
 	parte := func(n string, corpo []byte) *http.Request {
-		return httptest.NewRequest("PUT", "/envios/"+envio+"/arquivos/"+arq+"/partes/"+n, bytes.NewReader(corpo))
+		return httptest.NewRequest("PUT", "/envios/"+envio+"/arquivos/"+pos+"/partes/"+n, bytes.NewReader(corpo))
 	}
 	for nome, tc := range map[string]struct {
 		req    *http.Request
@@ -281,6 +294,8 @@ func TestEnvioErros(t *testing.T) {
 		"tamanho inválido":         {form("POST", "/envios/"+envio+"/arquivos", url.Values{"tamanho": {"x"}}), 400},
 		"rascunho inexistente":     {form("POST", "/envios/nao-existe/arquivos", url.Values{"tamanho": {"1"}}), 404},
 		"parte não numérica":       {parte("x", make([]byte, 10)), 400},
+		"arquivo não numérico":     {httptest.NewRequest("PUT", "/envios/"+envio+"/arquivos/x/partes/0", make10()), 400},
+		"arquivo inexistente":      {httptest.NewRequest("PUT", "/envios/"+envio+"/arquivos/7/partes/0", make10()), 404},
 		"parte com tamanho errado": {parte("0", make([]byte, 3)), 400},
 		"parte grande demais":      {parte("0", make([]byte, store.TamParte+1)), 413},
 		"concluir incompleto":      {form("POST", "/envios/"+envio+"/concluir", validos()), 400},
@@ -290,6 +305,54 @@ func TestEnvioErros(t *testing.T) {
 		if w := a.do(t, tc.req); w.Code != tc.codigo {
 			t.Errorf("%s: %d %s", nome, w.Code, w.Body)
 		}
+	}
+}
+
+func make10() *bytes.Reader { return bytes.NewReader(make([]byte, 10)) }
+
+// O id do anexo é o que o painel usa (/admin/arquivos/{id}) e sobrevive à conclusão.
+// Se ele passasse pelo navegador, o log de acesso do proxy (IP, hora, caminho)
+// ligaria quem enviou à denúncia. Aqui, tudo o que o navegador recebe e toda URL que
+// ele chama é guardado, e nada disso pode ser o id que ficou no banco.
+func TestIdDoAnexoNuncaSaiParaONavegador(t *testing.T) {
+	a := novo(t)
+	var visto []string
+	pedir := func(r *http.Request) *httptest.ResponseRecorder {
+		w := a.do(t, r)
+		visto = append(visto, r.URL.Path, w.Body.String())
+		return w
+	}
+	envio := idDe(t, pedir(httptest.NewRequest("POST", "/envios", nil)))
+	for _, conteudo := range [][]byte{[]byte("primeiro anexo"), []byte("segundo anexo")} {
+		pos := posicaoDe(t, pedir(form("POST", "/envios/"+envio+"/arquivos", url.Values{"tamanho": {fmt.Sprint(len(conteudo))}})))
+		w := pedir(httptest.NewRequest("PUT", fmt.Sprintf("/envios/%s/arquivos/%d/partes/0", envio, pos), bytes.NewReader(conteudo)))
+		if w.Code != 204 {
+			t.Fatalf("parte: %d %s", w.Code, w.Body)
+		}
+	}
+	if w := pedir(form("POST", "/envios/"+envio+"/concluir", validos())); w.Code != 200 {
+		t.Fatalf("concluir: %d %s", w.Code, w.Body)
+	}
+	lista, err := a.st.Listar("")
+	if err != nil || len(lista) != 1 {
+		t.Fatalf("%v %v", lista, err)
+	}
+	d, _ := a.st.Buscar(lista[0].ID)
+	if len(d.Anexos) != 2 {
+		t.Fatalf("esperava 2 anexos: %+v", d.Anexos)
+	}
+	for _, anexo := range d.Anexos {
+		for _, s := range visto {
+			if strings.Contains(s, anexo.ID) {
+				t.Errorf("o id do anexo %s chegou ao navegador em %q", anexo.ID, s)
+			}
+		}
+	}
+	// O rascunho sumiu: o id que o navegador conheceu não aponta para mais nada.
+	var n int
+	a.conn.QueryRow(`SELECT COUNT(*) FROM arquivos WHERE envio_id = ?`, envio).Scan(&n)
+	if n != 0 {
+		t.Errorf("%d arquivos ainda apontam para o rascunho", n)
 	}
 }
 
@@ -306,10 +369,10 @@ func TestConcluirRecusaFotoGrandeDemaisParaLimpar(t *testing.T) {
 	a := novo(t)
 	envio := idDe(t, a.do(t, httptest.NewRequest("POST", "/envios", nil)))
 	tamanho := maxImagemLimpa + 1
-	arq := idDe(t, a.do(t, form("POST", "/envios/"+envio+"/arquivos", url.Values{"tamanho": {fmt.Sprint(tamanho)}})))
+	pos := fmt.Sprint(posicaoDe(t, a.do(t, form("POST", "/envios/"+envio+"/arquivos", url.Values{"tamanho": {fmt.Sprint(tamanho)}}))))
 	// Só a primeira parte precisa existir: o tipo sai dela, e a recusa vem antes de ler o resto.
 	primeira := append(fotoComComentario(t), make([]byte, store.TamParte)...)[:store.TamParte]
-	a.do(t, httptest.NewRequest("PUT", "/envios/"+envio+"/arquivos/"+arq+"/partes/0", bytes.NewReader(primeira)))
+	a.do(t, httptest.NewRequest("PUT", "/envios/"+envio+"/arquivos/"+pos+"/partes/0", bytes.NewReader(primeira)))
 	w := a.do(t, form("POST", "/envios/"+envio+"/concluir", validos()))
 	if w.Code != 400 || !strings.Contains(w.Body.String(), "64 MB") {
 		t.Errorf("%d %s", w.Code, w.Body)

@@ -188,8 +188,8 @@ func TestLimparRascunhos(t *testing.T) {
 	if n, err := s.LimparRascunhos(agora); n != 1 || err != nil {
 		t.Fatalf("apagou %d (%v)", n, err)
 	}
-	if _, err := s.Arquivo(arq); !errors.Is(err, ErrNotFound) {
-		t.Error("o arquivo do rascunho abandonado ficou")
+	if restantes, err := s.ArquivosDoEnvio(velho); err != nil || len(restantes) != 0 {
+		t.Errorf("o arquivo do rascunho abandonado ficou: %v %v", restantes, err)
 	}
 	if _, err := s.NovoArquivo(ontem, 1, "x"); err != nil {
 		t.Errorf("o rascunho de ontem não podia sumir: %v", err)
@@ -199,8 +199,10 @@ func TestLimparRascunhos(t *testing.T) {
 func TestSubstituirArquivo(t *testing.T) {
 	s := newStore(t)
 	envio, _ := s.NovoEnvio(agora)
-	arq, _ := s.NovoArquivo(envio, 3, "png")
-	s.GravarParte(envio, arq, 0, []byte("abc"))
+	pos, _ := s.NovoArquivo(envio, 3, "png")
+	s.GravarParte(envio, pos, 0, []byte("abc"))
+	arquivos, _ := s.ArquivosDoEnvio(envio)
+	arq := arquivos[0].ID
 	limpo := bytes.Repeat([]byte("j"), TamParte+5)
 	if err := s.SubstituirArquivo(Arquivo{ID: arq, Tipo: "image/jpeg", Extensao: "jpg"}, limpo); err != nil {
 		t.Fatal(err)
@@ -336,7 +338,7 @@ func TestNaoEncontrado(t *testing.T) {
 	if _, err := s.Arquivo("x"); !errors.Is(err, ErrNotFound) {
 		t.Error(err)
 	}
-	if err := s.GravarParte("x", "y", 0, []byte{1}); !errors.Is(err, ErrNotFound) {
+	if err := s.GravarParte("x", 0, 0, []byte{1}); !errors.Is(err, ErrNotFound) {
 		t.Error(err)
 	}
 }
@@ -376,7 +378,7 @@ func TestErrosDoBanco(t *testing.T) {
 	checar := map[string]error{}
 	_, checar["NovoEnvio"] = s.NovoEnvio(agora)
 	_, checar["NovoArquivo"] = s.NovoArquivo("x", 1, "")
-	checar["GravarParte"] = s.GravarParte("x", "y", 0, []byte{1})
+	checar["GravarParte"] = s.GravarParte("x", 0, 0, []byte{1})
 	_, checar["ArquivosDoEnvio"] = s.ArquivosDoEnvio("x")
 	checar["LerArquivo"] = s.LerArquivo("x", &bytes.Buffer{})
 	checar["SubstituirArquivo"] = s.SubstituirArquivo(Arquivo{ID: "x"}, []byte{1})

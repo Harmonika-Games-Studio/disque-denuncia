@@ -160,12 +160,12 @@ func (s *Store) Registrar(n Nova, anexos []ArquivoPronto, agora time.Time) error
 }
 
 func (s *Store) gravarInteiro(envio string, a ArquivoPronto) error {
-	id, err := s.NovoArquivo(envio, int64(len(a.Dados)), a.Extensao)
+	pos, err := s.NovoArquivo(envio, int64(len(a.Dados)), a.Extensao)
 	if err != nil {
 		return err
 	}
 	for k := range Partes(int64(len(a.Dados))) {
-		if err := s.GravarParte(envio, id, k, a.Dados[k*TamParte:min(len(a.Dados), (k+1)*TamParte)]); err != nil {
+		if err := s.GravarParte(envio, pos, k, a.Dados[k*TamParte:min(len(a.Dados), (k+1)*TamParte)]); err != nil {
 			return err
 		}
 	}

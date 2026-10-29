@@ -55,7 +55,7 @@ func Handler(s *store.Store, cfg Config) http.Handler {
 	mux.HandleFunc("GET /{$}", srv.formulario)
 	mux.HandleFunc("POST /envios", srv.novoEnvio)
 	mux.HandleFunc("POST /envios/{id}/arquivos", srv.novoArquivo)
-	mux.HandleFunc("PUT /envios/{id}/arquivos/{arquivo}/partes/{n}", srv.gravarParte)
+	mux.HandleFunc("PUT /envios/{id}/arquivos/{posicao}/partes/{n}", srv.gravarParte)
 	mux.HandleFunc("POST /envios/{id}/concluir", srv.concluir)
 	mux.HandleFunc("POST /denuncias", srv.enviarSemJS)
 	mux.Handle("GET /static/", http.FileServerFS(static))

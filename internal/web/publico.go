@@ -18,10 +18,15 @@ import (
 //
 // Com JavaScript (static/canal.js), o envio vai em pedaços:
 //
-//	POST /envios                                  abre o rascunho → {"id"}
-//	POST /envios/{id}/arquivos                    tamanho, extensao → {"id"}
-//	PUT  /envios/{id}/arquivos/{arquivo}/partes/{n}  até 8 MB por parte
-//	POST /envios/{id}/concluir                    categoria, descricao
+//	POST /envios                                     abre o rascunho → {"id"}
+//	POST /envios/{id}/arquivos                       tamanho, extensao → {"posicao"}
+//	PUT  /envios/{id}/arquivos/{posicao}/partes/{n}  até 8 MB por parte
+//	POST /envios/{id}/concluir                       categoria, descricao
+//
+// O navegador só conhece o id do rascunho e a posição de cada arquivo nele; os dois
+// somem ao concluir. O id do arquivo (o que o painel usa) nunca sai do servidor: se
+// aparecesse na URL, o log de acesso do proxy (IP, hora, caminho) ligaria quem
+// enviou à denúncia. anonimato_test.go confere.
 //
 // Sem JavaScript, o formulário comum vai para POST /denuncias de uma vez, com anexos
 // pequenos (precisa caber nos 60 s do proxy).
@@ -51,15 +56,20 @@ func (s *Server) novoArquivo(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, fmt.Errorf("%w: tamanho inválido", store.ErrInvalid))
 		return
 	}
-	id, err := s.store.NovoArquivo(r.PathValue("id"), tamanho, r.FormValue("extensao"))
+	posicao, err := s.store.NovoArquivo(r.PathValue("id"), tamanho, r.FormValue("extensao"))
 	if err != nil {
 		fail(w, r, err)
 		return
 	}
-	responderJSON(w, map[string]any{"id": id})
+	responderJSON(w, map[string]any{"posicao": posicao})
 }
 
 func (s *Server) gravarParte(w http.ResponseWriter, r *http.Request) {
+	posicao, err := strconv.Atoi(r.PathValue("posicao"))
+	if err != nil {
+		fail(w, r, fmt.Errorf("%w: arquivo inválido", store.ErrInvalid))
+		return
+	}
 	n, err := strconv.Atoi(r.PathValue("n"))
 	if err != nil {
 		fail(w, r, fmt.Errorf("%w: parte inválida", store.ErrInvalid))
@@ -70,7 +80,7 @@ func (s *Server) gravarParte(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, err)
 		return
 	}
-	if err := s.store.GravarParte(r.PathValue("id"), r.PathValue("arquivo"), n, dados); err != nil {
+	if err := s.store.GravarParte(r.PathValue("id"), posicao, n, dados); err != nil {
 		fail(w, r, err)
 		return
 	}

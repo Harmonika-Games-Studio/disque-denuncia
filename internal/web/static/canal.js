@@ -4,6 +4,7 @@
 // num 4G passa disso. Então: abre um rascunho, manda cada arquivo em partes de
 // 8 MB (cada parte com até 4 tentativas) e conclui com o texto. Do arquivo, só sai
 // o conteúdo e a EXTENSÃO; o nome nunca é enviado (pode ter o nome da pessoa).
+// Cada arquivo é identificado pela posição no rascunho; o id interno nunca chega aqui.
 //
 // Sem JavaScript, o formulário vai inteiro para POST /denuncias (anexos pequenos).
 // Este arquivo não guarda nada no navegador e não lê nada sobre o aparelho.
@@ -66,10 +67,10 @@
         body: campos({ tamanho: arquivo.size, extensao: extensao(arquivo.name) }),
       }),
     )
-    const { id } = await r.json()
+    const { posicao } = await r.json()
     for (let n = 0, ini = 0; ini < arquivo.size; n++, ini += tamParte) {
       const parte = arquivo.slice(ini, Math.min(arquivo.size, ini + tamParte))
-      await comTentativas(() => pedir(`/envios/${envio}/arquivos/${id}/partes/${n}`, { method: "PUT", body: parte }))
+      await comTentativas(() => pedir(`/envios/${envio}/arquivos/${posicao}/partes/${n}`, { method: "PUT", body: parte }))
       avancar(parte.size)
     }
   }

@@ -26,9 +26,11 @@ poucos arquivos.
 | Apaga o metadado das fotos JPG, PNG e WebP (modelo do celular, GPS, data da foto, autor). | `internal/imagem/limpar.go`: decodifica até virar pixels e grava um JPEG novo, ao concluir o envio (`internal/web/limpeza.go`). |
 | Apaga o metadado de vídeo e áudio do celular (MP4, MOV, M4A, 3GP, MP3): GPS, aparelho, data da gravação, artista. | `internal/limpeza/mp4.go` e `mp3.go`: as caixas `udta`, `meta` e `uuid` viram `free` zeradas, as datas de `mvhd`/`tkhd`/`mdhd` viram zero e as etiquetas ID3 ficam vazias. Remendo no lugar, sem mudar o tamanho: vale para um vídeo de 5 GB. |
 | Apaga o metadado de Word, Excel, PowerPoint, LibreOffice, PDF e GIF: autor, quem comentou ou alterou, e-mail de login, empresa, caminhos do computador, impressora, datas, versões antigas do PDF, EXIF das fotos coladas. | `internal/limpeza/office.go`, `pdf.go` ([pdfcpu](https://github.com/pdfcpu/pdfcpu), sem rede e sem arquivo de configuração) e `imagens.go`. Regravados até 128 MB. O PDF regravado não leva a hora da limpeza (Info vazio, ID aleatório). |
+| Reabre o ZIP comum: cada arquivo de dentro perde o nome (vira `001.jpg`, `002.pdf`…), a data, os campos extras e o comentário; `__MACOSX`, `._*`, `.DS_Store` e `Thumbs.db` somem; e cada arquivo de dentro passa pela limpeza do tipo dele, ZIP dentro de ZIP incluso. | `internal/limpeza/zip.go`. Regravado até 128 MB, até 2000 arquivos e 3 níveis. Se algum arquivo de dentro é de um tipo que a limpeza não conhece, o ZIP sai **sem** a marca de limpo. |
 | Cada anexo diz se foi limpo. | Coluna `arquivos.limpo`, que vai ao OS no campo `limpo`. O painel e o OS avisam nos anexos que vieram como foram enviados. |
 | Nunca recebe o nome do arquivo. | `internal/web/static/canal.js` manda só a extensão; o tipo é detectado pelo conteúdo (`http.DetectContentType`), não pelo que o navegador diz. |
 | Anexos não viram arquivo no disco (arquivo tem hora de criação). | Ficam como BLOB no SQLite, em partes de 8 MB (tabela `partes`). Cada parte e o formulário sem JavaScript (até 20 MB) cabem na memória, então nem o arquivo temporário do `net/http` é criado. |
+| A URL que o navegador chama não leva nada que fique no banco. | O envio em pedaços usa só o id do rascunho e a **posição** do arquivo nele (`PUT /envios/{id}/arquivos/{posicao}/partes/{n}`); os dois somem ao concluir. O id do anexo, que sobrevive à conclusão e aparece em `/admin/arquivos/{id}`, nunca sai do servidor: se saísse, o log de acesso do proxy (IP, hora, caminho) ligaria quem enviou à denúncia. `TestIdDoAnexoNuncaSaiParaONavegador` confere. |
 | O envio em andamento não deixa rastro de hora. | O rascunho (`envios`) guarda só a data; rascunho abandonado é apagado no dia seguinte (`LimparRascunhos`). |
 | O navegador de quem denuncia não fala com nenhum outro servidor. | `Content-Security-Policy: default-src 'none'` em toda resposta; o htmx vem embutido no binário (`internal/web/static`), sem CDN e sem fonte externa. |
 | Sem log de acesso. | Não há middleware de log. O `ErrorLog` do `http.Server` vai para `io.Discard` (o do Go escreve o IP do cliente quando um handler entra em pânico). O único log é `erro interno` com a mensagem do erro, sem caminho, IP nem conteúdo. |
@@ -52,11 +54,11 @@ regras, mude este README junto: é o que a empresa promete a quem denuncia.
 - **O conteúdo dos arquivos.** A limpeza tira o que o programa grava escondido, não o
   que está à vista: a voz num áudio, o que aparece num vídeo, um nome escrito no
   documento, uma assinatura escaneada.
-- **Os tipos que a limpeza não conhece**, e os que ela não consegue abrir: ZIP, HEIC (a
+- **Os tipos que a limpeza não conhece**, e os que ela não consegue abrir: HEIC (a
   foto do iPhone quando o navegador não a converte), WebM, telemetria de GoPro e drone
-  (vem como faixa de dados dentro do vídeo), PDF com senha de abertura, documento ou PDF
-  acima de 128 MB. Esses vão como estão. O canal aceita e **avisa** (no formulário e em
-  "Saiba mais"), e o painel e o OS marcam esses anexos.
+  (vem como faixa de dados dentro do vídeo), PDF ou ZIP com senha, documento, PDF ou ZIP
+  acima de 128 MB. Esses vão como estão, soltos ou dentro de um ZIP. O canal aceita e
+  **avisa** (em "Saiba mais"), e o painel e o OS marcam esses anexos.
 - **A rede.** O provedor de hospedagem (a VPS, o proxy na frente) e a rede de onde a
   pessoa acessa (o Wi-Fi da empresa, a operadora) veem o IP de quem acessa, nos logs
   deles. O código não controla isso. Por isso a página orienta a enviar do celular

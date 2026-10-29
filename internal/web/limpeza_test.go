@@ -100,8 +100,14 @@ func TestConcluirLimpaVideoEDocumento(t *testing.T) {
 	if texto := lerTudoDoZip(t, conteudo(t, a.st, doc)); strings.Contains(texto, "Fulano") || !strings.Contains(texto, "Texto da denúncia") {
 		t.Errorf("documento: %s", texto)
 	}
-	if outro.Limpo || zipC.Limpo || !bytes.Equal(conteudo(t, a.st, outro), desconhecido) {
+	if outro.Limpo || !bytes.Equal(conteudo(t, a.st, outro), desconhecido) {
 		t.Error("o que a limpeza não conhece vai como veio, sem a marca")
+	}
+	// O ZIP comum é reaberto: o nome "fotos/Fulano.txt" some, mas o .txt de dentro
+	// é um tipo que a limpeza não conhece, então o ZIP sai sem a marca.
+	zr, err := zip.NewReader(bytes.NewReader(conteudo(t, a.st, zipC)), zipC.Tamanho)
+	if err != nil || len(zr.File) != 1 || zr.File[0].Name != "001.txt" || zipC.Limpo {
+		t.Errorf("zip comum: %v %+v %+v", err, zipC, zr)
 	}
 
 	pagina := a.do(t, pedidoAdmin("GET", "/admin/denuncias/"+d.ID, nil)).Body.String()
@@ -204,5 +210,49 @@ func TestSemPanico(t *testing.T) {
 	}
 	if l, ok := semPanico(func(b []byte) ([]byte, error) { return b, nil }, []byte("x")); !ok || string(l) != "x" {
 		t.Error("caso feliz")
+	}
+}
+
+// Um ZIP só com o que a limpeza conhece (foto com comentário e docx do Fulano) sai
+// limpo de ponta a ponta: a foto refeita pelo pacote imagem, o docx sem autor, os
+// nomes trocados, e a marca de limpo no anexo.
+func TestConcluirLimpaZipDeFotosEDocumentos(t *testing.T) {
+	a := novo(t)
+	var b bytes.Buffer
+	zw := zip.NewWriter(&b)
+	for nome, c := range map[string][]byte{"Fotos do Fulano/IMG_2026.jpg": fotoComComentario(t), "Contrato do Fulano.docx": docxDoFulano(t)} {
+		w, _ := zw.Create(nome)
+		w.Write(c)
+	}
+	zw.Close()
+	if w := a.enviarComo(t, validos(), b.Bytes()); w.Code != 200 {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	list, _ := a.st.Listar("")
+	d, _ := a.st.Buscar(list[0].ID)
+	anexo := d.Anexos[0]
+	if !anexo.Limpo || anexo.Tipo != "application/zip" {
+		t.Fatalf("anexo: %+v", anexo)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(conteudo(t, a.st, anexo)), anexo.Tamanho)
+	if err != nil || len(zr.File) != 2 {
+		t.Fatalf("%v %v", err, zr)
+	}
+	for _, f := range zr.File {
+		rc, _ := f.Open()
+		c, _ := io.ReadAll(rc)
+		rc.Close()
+		switch f.Name {
+		case "001.jpg":
+			if !bytes.HasPrefix(c, []byte{0xFF, 0xD8}) || bytes.Contains(c, []byte("Fulano")) {
+				t.Error("a foto de dentro do ZIP não foi refeita")
+			}
+		case "002.docx":
+			if texto := lerTudoDoZip(t, c); strings.Contains(texto, "Fulano") || !strings.Contains(texto, "Texto da denúncia") {
+				t.Errorf("docx de dentro do ZIP: %s", texto)
+			}
+		default:
+			t.Errorf("nome inesperado %q", f.Name)
+		}
 	}
 }
