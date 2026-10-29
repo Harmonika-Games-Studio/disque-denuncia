@@ -135,8 +135,7 @@ templ Garantias(cfg Config) {
 				<li>Os arquivos mandados são limpados de todos os metadados, como o modelo do celular, localização e data da foto.</li>
 				if cfg.EntregaHora >= 0 {
 					<li>
-						Todo dia, a partir das { strconv.Itoa(cfg.EntregaHora) }h, as denúncias dos dias anteriores são enviadas ao sistema
-						interno da empresa, só com a data, e apagadas daqui.
+						Todo dia, a partir das { strconv.Itoa(cfg.EntregaHora) }h, as denúncias dos dias anteriores são enviadas ao HarmonikaOS e apagadas daqui.
 					</li>
 				} else {
 					<li>As denúncias ficam guardadas aqui, e só a administração lê.</li>
