@@ -36,7 +36,7 @@ poucos arquivos.
 | Sem log de acesso. | Não há middleware de log. O `ErrorLog` do `http.Server` vai para `io.Discard` (o do Go escreve o IP do cliente quando um handler entra em pânico). O único log é `erro interno` com a mensagem do erro, sem caminho, IP nem conteúdo. |
 | Sem cache e sem `Referer`. | `Cache-Control: no-store` e `Referrer-Policy: no-referrer` em toda resposta. |
 | Apagado é apagado de verdade. | `PRAGMA secure_delete` (o SQLite zera o que é removido). |
-| A entrega ao HarmonikaOS não conta a hora do envio, nem o IP. | `internal/entrega`: sai só o lote dos **dias anteriores**, a partir de `ENTREGA_HORA`; o request parte deste servidor; o JSON leva só id, categoria, descrição, data e, de cada anexo, tipo, tamanho e extensão. |
+| A entrega ao HarmonikaOS não conta a hora do envio, nem o IP. | `internal/entrega`: no padrão, sai só o lote dos **dias anteriores**, a partir de `ENTREGA_HORA`; o request parte deste servidor; o JSON leva só id, categoria, descrição, data e, de cada anexo, tipo, tamanho e extensão. Quem denuncia pode escolher **"Agora"** no formulário: aí a denúncia sai em até 1 minuto, e a página avisa que o horário de chegada mostra a hora aproximada do envio. |
 | Depois de entregue, não fica cópia aqui. | `entrega.Tentar` só chama `Remover` depois de o OS confirmar o texto e cada anexo. |
 
 ### A trava automática
@@ -77,8 +77,17 @@ denúncia a quem enviou, nem a própria pessoa.
 
 ## Entrega ao HarmonikaOS
 
-A cada 10 minutos, se já passou de `ENTREGA_HORA` (horário de Brasília), o canal entrega
-as denúncias com data **anterior a hoje**:
+A cada minuto o canal entrega:
+
+- as denúncias em que a pessoa escolheu **"Agora"** (coluna `imediata`), a qualquer hora;
+- as do padrão, **"No dia seguinte"**, com data **anterior a hoje**, se já passou de
+  `ENTREGA_HORA` (horário de Brasília).
+
+A escolha é de quem denuncia, a cada envio, e o padrão é o dia seguinte (qualquer valor
+que não seja `agora` cai nele). Com a entrega desligada (`OS_URL` vazio), o formulário
+não mostra a escolha.
+
+
 
 ```
 POST {OS_URL}/api/denuncias/receber                   {"id","categoria","descricao","recebida_em","anexos":[{"tipo","tamanho","extensao"}]}

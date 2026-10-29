@@ -92,7 +92,11 @@
     rotulo.textContent = "Concluindo…"
     const fim = await pedir(`/envios/${envio}/concluir`, {
       method: "POST",
-      body: campos({ categoria: form.categoria.value, descricao: form.descricao.value }),
+      body: campos({
+        categoria: form.categoria.value,
+        descricao: form.descricao.value,
+        quando: form.quando ? form.quando.value : "",
+      }),
     })
     canal.innerHTML = await fim.text()
   }

@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -143,7 +144,8 @@ func TestPaginaPublica(t *testing.T) {
 	}
 	for _, trecho := range []string{
 		"Harmonika", "Assédio moral", "<summary>Saiba mais</summary>", "a partir das 8h",
-		cfgTeste.RepoURL, "apagamos os metadados dos arquivos", "Arquivos .zip são reabertos aqui", "vai como está", `data-max-rotulo="5 GB"`,
+		`name="quando" value="dia_seguinte" checked`, `name="quando" value="agora"`, "mais anônimo",
+		cfgTeste.RepoURL, "apagamos os metadados dos arquivos", "Arquivos .zip são reabertos aqui", "podem conter resquicios", `data-max-rotulo="5 GB"`,
 	} {
 		if !strings.Contains(corpo, trecho) {
 			t.Errorf("faltou %q", trecho)
@@ -165,7 +167,7 @@ func TestPaginaSemEntregaNemRepositorio(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
 	corpo := w.Body.String()
-	if !strings.Contains(corpo, "ficam guardadas aqui") || strings.Contains(corpo, "GitHub") || strings.Contains(corpo, "a partir das") {
+	if !strings.Contains(corpo, "ficam guardadas aqui") || strings.Contains(corpo, "GitHub") || strings.Contains(corpo, "a partir das") || strings.Contains(corpo, `name="quando"`) {
 		t.Errorf("sem entrega nem repositório: %s", corpo)
 	}
 }
@@ -246,6 +248,38 @@ func TestEnviarSemJavascript(t *testing.T) {
 	// Parte vazia (nenhum arquivo escolhido) é ignorada.
 	if w := a.do(t, multipartSemJS(t, validos(), "x", nil)); w.Code != 200 {
 		t.Errorf("sem arquivo: %d", w.Code)
+	}
+}
+
+// Quem denuncia escolhe a cada envio. Só "agora" muda o caminho; o resto (vazio,
+// valor estranho) fica no dia seguinte, que conta menos.
+func TestQuemEnviaEscolheQuando(t *testing.T) {
+	a := novo(t)
+	com := func(categoria, quando string) url.Values {
+		v := url.Values{"categoria": {categoria}, "descricao": {texto}}
+		if quando != "" {
+			v.Set("quando", quando)
+		}
+		return v
+	}
+	for _, c := range []struct{ categoria, quando string }{
+		{"fraude", "agora"}, {"conduta", "dia_seguinte"}, {"outro", ""}, {"seguranca", "ja"},
+	} {
+		if w := a.enviarComo(t, com(c.categoria, c.quando)); w.Code != 200 {
+			t.Fatalf("%s: %d %s", c.quando, w.Code, w.Body)
+		}
+	}
+	if w := a.do(t, multipartSemJS(t, com("discriminacao", "agora"), "", nil)); w.Code != 200 {
+		t.Fatalf("sem JS: %d %s", w.Code, w.Body)
+	}
+	agora, _ := a.st.Pendentes(store.Dia(time.Now()), true)
+	var cats []string
+	for _, d := range agora {
+		cats = append(cats, d.Categoria)
+	}
+	slices.Sort(cats)
+	if !slices.Equal(cats, []string{"discriminacao", "fraude"}) {
+		t.Errorf("imediatas: %v", cats)
 	}
 }
 

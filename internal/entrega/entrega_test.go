@@ -179,6 +179,25 @@ func TestAntesDaHoraNaoEntrega(t *testing.T) {
 	}
 }
 
+func TestAgoraSaiAntesDaHoraEODiaSeguinteEspera(t *testing.T) {
+	st, o, e := montar(t)
+	registrar(t, st, ontem)                                // dia seguinte: espera as 8h
+	cedo := time.Date(2026, 10, 28, 3, 30, 0, 0, time.UTC) // 00:30 BRT
+	if err := st.Registrar(store.Nova{Categoria: "conduta", Descricao: texto, Imediata: true}, nil, cedo); err != nil {
+		t.Fatal(err)
+	}
+	e.Agora = func() time.Time { return cedo }
+	if n, err := e.Tentar(context.Background()); n != 1 || err != nil {
+		t.Fatalf("entregou %d: %v", n, err)
+	}
+	if len(o.denuncias) != 1 || o.denuncias[0].Categoria != "conduta" || o.denuncias[0].RecebidaEm != "2026-10-28" {
+		t.Errorf("chegou ao OS: %+v", o.denuncias)
+	}
+	if resto, _ := st.Pendentes("2026-10-29", false); len(resto) != 1 || resto[0].Categoria != "fraude" {
+		t.Errorf("a do dia seguinte não esperou: %+v", resto)
+	}
+}
+
 func TestFalhaMantemNoSQLiteERepete(t *testing.T) {
 	for _, recusar := range []string{"POST /api/denuncias/receber", "POST /api/denuncias/receber/", "PUT /storage/"} {
 		st, o, e := montar(t)
@@ -237,7 +256,7 @@ type filaQuebrada struct {
 	pendentes, ler, remover error
 }
 
-func (f filaQuebrada) Pendentes(string) ([]store.Denuncia, error) {
+func (f filaQuebrada) Pendentes(string, bool) ([]store.Denuncia, error) {
 	return []store.Denuncia{{ID: "x", Anexos: []store.Arquivo{{ID: "a", Tamanho: 1}}}}, f.pendentes
 }
 func (f filaQuebrada) LerArquivo(_ string, w io.Writer) error {

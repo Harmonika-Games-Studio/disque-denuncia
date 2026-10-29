@@ -21,7 +21,7 @@ import (
 //	POST /envios                                     abre o rascunho → {"id"}
 //	POST /envios/{id}/arquivos                       tamanho, extensao → {"posicao"}
 //	PUT  /envios/{id}/arquivos/{posicao}/partes/{n}  até 8 MB por parte
-//	POST /envios/{id}/concluir                       categoria, descricao
+//	POST /envios/{id}/concluir                       categoria, descricao, quando
 //
 // O navegador só conhece o id do rascunho e a posição de cada arquivo nele; os dois
 // somem ao concluir. O id do arquivo (o que o painel usa) nunca sai do servidor: se
@@ -89,7 +89,7 @@ func (s *Server) gravarParte(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) concluir(w http.ResponseWriter, r *http.Request) {
 	envio := r.PathValue("id")
-	n := store.Nova{Categoria: r.FormValue("categoria"), Descricao: r.FormValue("descricao")}
+	n := novaDoFormulario(r)
 	// Valida o texto antes de gastar CPU com os anexos.
 	if err := n.Validar(); err != nil {
 		fail(w, r, err)
@@ -115,7 +115,7 @@ func (s *Server) enviarSemJS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.MultipartForm.RemoveAll()
 
-	n := store.Nova{Categoria: r.FormValue("categoria"), Descricao: r.FormValue("descricao")}
+	n := novaDoFormulario(r)
 	if err := n.Validar(); err != nil {
 		fail(w, r, err)
 		return
@@ -141,6 +141,16 @@ func (s *Server) enviarSemJS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	render(w, r, RecebidaPage(s.cfg))
+}
+
+// novaDoFormulario lê o texto e a escolha de quando enviar. Qualquer valor que não
+// seja "agora" fica com o padrão, o dia seguinte, que é o que conta menos.
+func novaDoFormulario(r *http.Request) store.Nova {
+	return store.Nova{
+		Categoria: r.FormValue("categoria"),
+		Descricao: r.FormValue("descricao"),
+		Imediata:  r.FormValue("quando") == "agora",
+	}
 }
 
 // prontos lê os anexos do formulário comum (a limpeza vem depois, igual ao envio em

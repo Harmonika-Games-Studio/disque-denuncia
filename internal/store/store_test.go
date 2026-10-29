@@ -348,7 +348,7 @@ func TestPendentesSoDiasCompletos(t *testing.T) {
 	s.Registrar(Nova{Categoria: "outro", Descricao: texto}, []ArquivoPronto{{Dados: []byte("a")}, {Dados: []byte("b")}}, agora.Add(-24*time.Hour))
 	s.Registrar(nova, nil, agora)
 
-	list, err := s.Pendentes(Dia(agora))
+	list, err := s.Pendentes(Dia(agora), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -366,8 +366,33 @@ func TestPendentesSoDiasCompletos(t *testing.T) {
 	if partes != 0 {
 		t.Errorf("sobraram %d partes", partes)
 	}
-	if rest, _ := s.Pendentes(Dia(agora.Add(24 * time.Hour))); len(rest) != 1 || rest[0].Categoria != "fraude" {
+	if rest, _ := s.Pendentes(Dia(agora.Add(24*time.Hour)), false); len(rest) != 1 || rest[0].Categoria != "fraude" {
 		t.Errorf("amanhã: %+v", rest)
+	}
+}
+
+func TestPendentesImediatasSaemNoMesmoDia(t *testing.T) {
+	s := newStore(t)
+	s.Registrar(Nova{Categoria: "outro", Descricao: texto}, nil, agora.Add(-24*time.Hour)) // ontem, dia seguinte
+	s.Registrar(Nova{Categoria: "fraude", Descricao: texto, Imediata: true}, nil, agora)   // hoje, agora
+	s.Registrar(nova, nil, agora)                                                          // hoje, dia seguinte
+
+	categorias := func(soImediatas bool) []string {
+		list, err := s.Pendentes(Dia(agora), soImediatas)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, d := range list {
+			out = append(out, d.Categoria)
+		}
+		return out
+	}
+	if got := categorias(true); len(got) != 1 || got[0] != "fraude" {
+		t.Errorf("antes da hora, só a de agora: %v", got)
+	}
+	if got := categorias(false); len(got) != 2 || got[0] != "outro" || got[1] != "fraude" {
+		t.Errorf("depois da hora, a de ontem e a de agora; a de hoje espera: %v", got)
 	}
 }
 
@@ -388,7 +413,7 @@ func TestErrosDoBanco(t *testing.T) {
 	_, checar["Buscar"] = s.Buscar("x")
 	_, checar["Arquivo"] = s.Arquivo("x")
 	checar["Atualizar"] = s.Atualizar("x", "nova", "", agora)
-	_, checar["Pendentes"] = s.Pendentes("2026-10-28")
+	_, checar["Pendentes"] = s.Pendentes("2026-10-28", false)
 	checar["Remover"] = s.Remover("x")
 	_, checar["Authenticate"] = s.Authenticate("a", "b")
 	for nome, err := range checar {

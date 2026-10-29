@@ -52,7 +52,7 @@ func TestOpenAplicaMigrationsUmaVez(t *testing.T) {
 func TestColunasNaoIdentificamQuemEnviou(t *testing.T) {
 	conn, _ := open(t)
 	for tabela, esperadas := range map[string][]string{
-		"denuncias": {"id", "categoria", "descricao", "recebida_em", "status", "parecer", "atualizada_em"},
+		"denuncias": {"id", "categoria", "descricao", "recebida_em", "status", "parecer", "atualizada_em", "imediata"},
 		"envios":    {"id", "criado_dia"},
 		"arquivos":  {"id", "envio_id", "denuncia_id", "posicao", "tamanho", "extensao", "tipo", "limpo"},
 		"partes":    {"arquivo_id", "n", "dados"},

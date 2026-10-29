@@ -39,6 +39,11 @@ templ base(title string) {
 				select, textarea, input[type=file] { width: 100%; padding: .55rem .7rem; font: inherit; color: var(--texto); background: var(--superficie); border: 1px solid var(--borda); border-radius: 8px; }
 				select:focus, textarea:focus, input:focus, button:focus-visible, summary:focus-visible { outline: 1px solid var(--laranja); outline-offset: 0; border-color: var(--laranja); }
 				textarea { min-height: 12rem; resize: vertical; }
+				fieldset { border: 0; padding: 0; margin: 0; }
+				legend { padding: 0; font-weight: 500; font-size: .9rem; color: var(--texto-sec); margin: 1.1rem 0 .35rem; }
+				label.opcao { display: flex; gap: .6rem; align-items: flex-start; margin: .5rem 0; font-weight: 400; font-size: .95rem; color: var(--texto); cursor: pointer; }
+				label.opcao input { margin: .3rem 0 0; accent-color: var(--laranja); }
+				label.opcao small { display: block; }
 				option { background: var(--superficie); color: var(--texto); }
 				input[type=file]::file-selector-button { font: inherit; color: var(--texto); background: var(--elevado); border: 1px solid var(--borda-clara); border-radius: 6px; padding: .3rem .8rem; margin-right: .8rem; cursor: pointer; }
 				button { margin-top: 1.25rem; padding: .6rem 1.3rem; font: inherit; font-weight: 600; color: #fff; background: var(--laranja); border: 0; border-radius: 8px; cursor: pointer; }
@@ -105,6 +110,9 @@ templ FormularioPage(cfg Config) {
 				></textarea>
 				<label for="arquivos">Arquivos: </label>
 				<input id="arquivos" type="file" name="arquivos" multiple/>
+				if cfg.EntregaHora >= 0 {
+					@QuandoEnviar(cfg)
+				}
 				<div id="progresso" hidden>
 					<progress max="100" value="0"></progress>
 					<span></span>
@@ -114,6 +122,28 @@ templ FormularioPage(cfg Config) {
 		</div>
 		<script src="/static/canal.js"></script>
 	}
+}
+
+// QuandoEnviar é a escolha de quem denuncia: o padrão conta menos (só a data chega
+// ao HarmonikaOS); "agora" é mais rápido e conta a hora aproximada.
+templ QuandoEnviar(cfg Config) {
+	<fieldset>
+		<legend>Quando enviar para a administração?</legend>
+		<label class="opcao">
+			<input type="radio" name="quando" value="dia_seguinte" checked/>
+			<span>
+				No dia seguinte, a partir das { strconv.Itoa(cfg.EntregaHora) }h (mais anônimo)
+				<small>A administração só fica sabendo o dia em que você enviou.</small>
+			</span>
+		</label>
+		<label class="opcao">
+			<input type="radio" name="quando" value="agora"/>
+			<span>
+				Agora
+				<small>Chega em poucos minutos, e o horário de chegada mostra mais ou menos quando você enviou.</small>
+			</span>
+		</label>
+	</fieldset>
 }
 
 // Garantias é o que o canal promete, em uma frase, com os detalhes em “Saiba mais”.
@@ -136,7 +166,8 @@ templ Garantias(cfg Config) {
 				<li>Arquivos .zip são reabertos aqui: cada arquivo de dentro perde o nome e é limpo também. Outros tipos de arquivos podem conter resquicios.</li>
 				if cfg.EntregaHora >= 0 {
 					<li>
-						Todo dia, a partir das { strconv.Itoa(cfg.EntregaHora) }h, as denúncias dos dias anteriores são enviadas ao HarmonikaOS e apagadas daqui.
+						Você escolhe quando a denúncia vai para o HarmonikaOS: no dia seguinte, a partir das { strconv.Itoa(cfg.EntregaHora) }h, junto com as outras do dia,
+						ou agora, em poucos minutos. Depois de enviada, ela é apagada daqui.
 					</li>
 				} else {
 					<li>As denúncias ficam guardadas aqui, e só a administração lê.</li>

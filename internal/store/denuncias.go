@@ -13,6 +13,8 @@ import (
 type Nova struct {
 	Categoria string
 	Descricao string
+	// Imediata: a pessoa escolheu mandar agora, e não no dia seguinte (ver Pendentes).
+	Imediata bool
 }
 
 type Denuncia struct {
@@ -76,8 +78,8 @@ func (s *Store) Concluir(envioID string, n Nova, agora time.Time) error {
 
 func gravarDenuncia(tx *sql.Tx, envioID string, n Nova, dia string) error {
 	id := novoID()
-	_, err := tx.Exec(`INSERT INTO denuncias (id, categoria, descricao, recebida_em) VALUES (?, ?, ?, ?)`,
-		id, n.Categoria, strings.TrimSpace(n.Descricao), dia)
+	_, err := tx.Exec(`INSERT INTO denuncias (id, categoria, descricao, recebida_em, imediata) VALUES (?, ?, ?, ?, ?)`,
+		id, n.Categoria, strings.TrimSpace(n.Descricao), dia, n.Imediata)
 	if err != nil {
 		return err
 	}
@@ -236,11 +238,15 @@ func (s *Store) Atualizar(id, status, parecer string, agora time.Time) error {
 	return nil
 }
 
-// Pendentes traz as denúncias recebidas ANTES do dia `hoje` (AAAA-MM-DD), com os
-// anexos. Só dias completos saem: entregar a de hoje às 08:00 contaria que ela
-// chegou de madrugada.
-func (s *Store) Pendentes(hoje string) ([]Denuncia, error) {
-	rows, err := s.db.Query(`SELECT id FROM denuncias WHERE recebida_em < ? ORDER BY recebida_em, id`, hoje)
+// Pendentes traz, com os anexos, o que está pronto para sair:
+//
+//   - as que a pessoa mandou "agora" (imediata), de qualquer dia;
+//   - as do dia seguinte, recebidas ANTES de `hoje` (AAAA-MM-DD): só dias completos,
+//     porque entregar a de hoje às 08:00 contaria que ela chegou de madrugada.
+//     soImediatas = ainda não é a hora da entrega do dia, e elas esperam.
+func (s *Store) Pendentes(hoje string, soImediatas bool) ([]Denuncia, error) {
+	rows, err := s.db.Query(`SELECT id FROM denuncias WHERE imediata = 1 OR (NOT ? AND recebida_em < ?)
+		ORDER BY recebida_em, id`, soImediatas, hoje)
 	if err != nil {
 		return nil, err
 	}

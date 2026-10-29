@@ -1,11 +1,15 @@
-// Package entrega leva as denúncias para o HarmonikaOS uma vez por dia e apaga
-// a cópia local depois que o OS confirma.
+// Package entrega leva as denúncias para o HarmonikaOS e apaga a cópia local
+// depois que o OS confirma.
 //
 // Por que em lote, e só dias completos: se cada denúncia saísse na hora, o OS
 // (logs da Vercel, data do upload, horário do aviso ao admin) saberia a hora do
 // envio, que aqui não é guardada. Saindo só as de dias anteriores, a partir de
 // HoraEntrega, o horário da entrega não conta nada além da data, e uma nova
 // tentativa depois de uma falha pode acontecer a qualquer hora.
+//
+// Esse é o padrão. Quem denuncia pode escolher "agora" (store.Nova.Imediata): a
+// denúncia sai na próxima volta (a cada minuto), sem esperar o dia virar, e a
+// página avisa que o horário de chegada no OS mostra a hora aproximada do envio.
 //
 // O request sai deste servidor: o IP de quem denunciou nunca chega ao OS.
 //
@@ -35,7 +39,7 @@ import (
 
 // fila é o que a entrega precisa do store.
 type fila interface {
-	Pendentes(hoje string) ([]store.Denuncia, error)
+	Pendentes(hoje string, soImediatas bool) ([]store.Denuncia, error)
 	LerArquivo(id string, w io.Writer) error
 	Remover(id string) error
 }
@@ -44,7 +48,7 @@ type Entregador struct {
 	Fila        fila
 	URL         string // base do HarmonikaOS, ex.: https://os.harmonikaco.com
 	Token       string // Bearer; o mesmo DENUNCIA_TOKEN configurado no OS
-	HoraEntrega int    // hora de Brasília a partir da qual o lote do dia sai
+	HoraEntrega int    // hora de Brasília a partir da qual o lote do dia seguinte sai
 	Client      *http.Client
 	Agora       func() time.Time
 }
@@ -67,14 +71,12 @@ func (e *Entregador) Run(ctx context.Context, intervalo time.Duration) {
 	}
 }
 
-// Tentar entrega o que está pendente, se já passou da hora. Para na primeira falha
-// (a denúncia que falhou continua no SQLite) e devolve quantas foram entregues.
+// Tentar entrega o que está pendente: as "agora" sempre, as do dia seguinte só depois
+// de HoraEntrega. Para na primeira falha (a denúncia que falhou continua no SQLite) e
+// devolve quantas foram entregues.
 func (e *Entregador) Tentar(ctx context.Context) (int, error) {
 	agora := e.Agora()
-	if store.Hora(agora) < e.HoraEntrega {
-		return 0, nil
-	}
-	pendentes, err := e.Fila.Pendentes(store.Dia(agora))
+	pendentes, err := e.Fila.Pendentes(store.Dia(agora), store.Hora(agora) < e.HoraEntrega)
 	if err != nil {
 		return 0, err
 	}
