@@ -83,11 +83,9 @@ templ FormularioPage(cfg Config) {
 					required
 					minlength={ strconv.Itoa(store.DescricaoMin) }
 					maxlength={ strconv.Itoa(store.DescricaoMax) }
-					placeholder="Conte o que aconteceu, onde e quando, e quem estava envolvido."
 				></textarea>
 				<label for="arquivos">Arquivos (opcional): fotos, prints, documentos, vídeos ou áudios, até { store.RotuloTamanho(store.MaxTotal) } no total</label>
 				<input id="arquivos" type="file" name="arquivos" multiple/>
-				<small>Fotos, vídeos, áudios, PDF e documentos do Office perdem os metadados aqui. Outros tipos vão como estão: veja “Saiba mais”.</small>
 				<div id="progresso" hidden>
 					<progress max="100" value="0"></progress>
 					<span></span>
@@ -113,20 +111,9 @@ templ Garantias(cfg Config) {
 		<details>
 			<summary>Saiba mais</summary>
 			<ul>
-				<li>Não pedimos nome, e-mail nem login, e o canal não usa cookie.</li>
-				<li>Não guardamos o seu IP, o seu navegador nem a hora do envio: só a data.</li>
-				<li>Fotos (JPG, PNG e WebP) são refeitas aqui e ficam só os pixels. Modelo do celular, localização e data da foto são apagados.</li>
-				<li>
-					Vídeos e áudios do celular (MP4, MOV, M4A, MP3) perdem a localização, o modelo do aparelho e a data da gravação.
-					Documentos do Word, Excel, PowerPoint e LibreOffice, PDF e GIF perdem o autor, quem comentou ou alterou, a
-					empresa, os caminhos do computador, as datas e o EXIF das fotos coladas neles.
-				</li>
-				<li>
-					<strong>O que fica:</strong> o conteúdo. A sua voz num áudio, o que aparece num vídeo, um nome escrito no
-					documento, uma assinatura escaneada. Outros tipos de arquivo (ZIP, HEIC, vídeo de drone ou câmera de ação),
-					PDF com senha e documento acima de 128 MB vão como estão e podem levar o seu nome ou a localização. Se puder,
-					mande um print ou uma foto da tela no lugar.
-				</li>
+				<li>Não pedimos nome, e-mail nem login, e o canal não usa cookies.</li>
+				<li>Não guardamos o seu IP, o seu navegador nem a hora do envio, somente o dia de envio.</li>
+				<li>Os arquivos mandados são limpados de todos os metadados, como o modelo do celular, localização e data da foto.</li>
 				if cfg.EntregaHora >= 0 {
 					<li>
 						Todo dia, a partir das { strconv.Itoa(cfg.EntregaHora) }h, as denúncias dos dias anteriores são enviadas ao sistema
@@ -138,13 +125,12 @@ templ Garantias(cfg Config) {
 				if cfg.RepoURL != "" {
 					<li>
 						O código deste canal é aberto: <a href={ templ.SafeURL(cfg.RepoURL) } target="_blank" rel="noopener noreferrer">{ cfg.RepoURL }</a>.
-						Qualquer pessoa pode conferir que ele faz só o que está escrito aqui.
+						Qualquer pessoa pode conferir os mecanismos de anônimo.
 					</li>
 				}
 				<li>
-					Para ficar ainda mais seguro: use o seu celular pessoal, fora do Wi-Fi da empresa, e não escreva detalhes
-					que só você saberia. Não há protocolo nem acompanhamento: depois de enviada, ninguém consegue ligar a
-					denúncia a você, nem você.
+					Para garantir mais segurança use o seu celular pessoal fora do Wi-Fi da empresa e não escreva detalhes
+					que só você saberia. Depois de enviada, ninguém consegue ligar a denúncia a você.
 				</li>
 			</ul>
 		</details>
