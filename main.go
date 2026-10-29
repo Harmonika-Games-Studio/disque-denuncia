@@ -77,7 +77,7 @@ func run() error {
 	return nil
 }
 
-// iniciarEntrega liga a entrega diária ao HarmonikaOS e devolve a hora dela. Sem
+// iniciarEntrega liga a entrega ao HarmonikaOS e devolve a hora dela. Sem
 // OS_URL, as denúncias ficam só aqui, no painel /admin, e a hora é -1.
 func iniciarEntrega(ctx context.Context, st *store.Store) (int, error) {
 	url, token := os.Getenv("OS_URL"), os.Getenv("OS_TOKEN")
@@ -101,7 +101,9 @@ func iniciarEntrega(ctx context.Context, st *store.Store) (int, error) {
 	e := &entrega.Entregador{
 		Fila: st, URL: url, Token: token, HoraEntrega: hora, Client: cliente, Agora: time.Now,
 	}
-	go e.Run(ctx, 10*time.Minute)
+	// A cada minuto: é o tempo que a denúncia mandada "agora" espera. A do dia seguinte
+	// só sai depois da hora, e consultar o SQLite vazio é barato.
+	go e.Run(ctx, time.Minute)
 	slog.Info("entrega ao HarmonikaOS ligada", "url", url, "a_partir_das", hora)
 	return hora, nil
 }
