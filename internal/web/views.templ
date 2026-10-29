@@ -43,7 +43,6 @@ templ base(title string) {
 				legend { padding: 0; font-weight: 500; font-size: .9rem; color: var(--texto-sec); margin: 1.1rem 0 .35rem; }
 				label.opcao { display: flex; gap: .6rem; align-items: flex-start; margin: .5rem 0; font-weight: 400; font-size: .95rem; color: var(--texto); cursor: pointer; }
 				label.opcao input { margin: .3rem 0 0; accent-color: var(--laranja); }
-				label.opcao small { display: block; }
 				option { background: var(--superficie); color: var(--texto); }
 				input[type=file]::file-selector-button { font: inherit; color: var(--texto); background: var(--elevado); border: 1px solid var(--borda-clara); border-radius: 6px; padding: .3rem .8rem; margin-right: .8rem; cursor: pointer; }
 				button { margin-top: 1.25rem; padding: .6rem 1.3rem; font: inherit; font-weight: 600; color: #fff; background: var(--laranja); border: 0; border-radius: 8px; cursor: pointer; }
@@ -131,17 +130,11 @@ templ QuandoEnviar(cfg Config) {
 		<legend>Quando enviar para a administração?</legend>
 		<label class="opcao">
 			<input type="radio" name="quando" value="dia_seguinte" checked/>
-			<span>
-				No dia seguinte, a partir das { strconv.Itoa(cfg.EntregaHora) }h (mais anônimo)
-				<small>A administração só fica sabendo o dia em que você enviou.</small>
-			</span>
+			<span>No dia seguinte, a partir das { strconv.Itoa(cfg.EntregaHora) }h (mais anônimo)</span>
 		</label>
 		<label class="opcao">
 			<input type="radio" name="quando" value="agora"/>
-			<span>
-				Agora
-				<small>Chega em poucos minutos, e o horário de chegada mostra mais ou menos quando você enviou.</small>
-			</span>
+			<span>Agora</span>
 		</label>
 	</fieldset>
 }
@@ -167,7 +160,7 @@ templ Garantias(cfg Config) {
 				if cfg.EntregaHora >= 0 {
 					<li>
 						Você escolhe quando a denúncia vai para o HarmonikaOS: no dia seguinte, a partir das { strconv.Itoa(cfg.EntregaHora) }h, junto com as outras do dia,
-						ou agora, em poucos minutos. Depois de enviada, ela é apagada daqui.
+						ou agora, em poucos minutos (aí o horário em que ela chega mostra mais ou menos quando você enviou). Depois de enviada, ela é apagada daqui.
 					</li>
 				} else {
 					<li>As denúncias ficam guardadas aqui, e só a administração lê.</li>
