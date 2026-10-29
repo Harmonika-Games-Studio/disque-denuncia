@@ -65,9 +65,16 @@ POST {OS_URL}/api/denuncias/receber                    {"id","categoria","descri
 PUT  {OS_URL}/api/denuncias/receber/{id}/imagens/{n}   o JPEG n, uma imagem por request (limite de 4,5 MB da Vercel)
 ```
 
-Os dois levam `Authorization: Bearer {OS_TOKEN}`. No OS, o mesmo valor fica em
-`DENUNCIA_TOKEN` (mínimo de 32 caracteres) e a empresa em `DENUNCIA_EMPRESA_ID`. Os dois
-lados são idempotentes pelo id: se a entrega cair no meio, a denúncia continua aqui e a
+Os dois levam `Authorization: Bearer {OS_TOKEN}`. O token é gerado pelo admin no
+HarmonikaOS, em **Admin › Denúncias › Token do canal**, e aparece uma vez só (o OS guarda
+apenas o hash). A empresa das denúncias é a dona do token.
+
+**Rotacionar:** gere um token novo na mesma tela (o anterior para de valer na hora), troque
+o `OS_TOKEN` deste serviço e reinicie. No intervalo, as entregas recebem 401 e as denúncias
+esperam aqui; nada se perde. **Desativar** na mesma tela apaga o token e o OS para de
+aceitar entregas.
+
+Os dois lados são idempotentes pelo id: se a entrega cair no meio, a denúncia continua aqui e a
 próxima tentativa repete tudo sem duplicar. Só depois de tudo confirmado ela é apagada
 daqui.
 
